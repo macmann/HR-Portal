@@ -9,6 +9,7 @@ const https = require('https');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
 const { db, init, getDatabase } = require('./db');
 const { parse } = require('csv-parse/sync');
 const {
@@ -19,6 +20,8 @@ const {
   getRequestById: getPairRequestById
 } = require('./pairingStore');
 const recruitmentOpenApiSpec = require('./api/recruitmentopenAI');
+const hrPositionsRoutes = require('./api/hrPositions');
+const publicCareersRoutes = require('./api/publicCareers');
 
 const app = express();
 
@@ -1268,35 +1271,87 @@ function normalizePositionsData(dbInstance) {
   if (!dbInstance || !dbInstance.data) return;
   dbInstance.data.positions = dbInstance.data.positions || [];
   dbInstance.data.positions.forEach(position => {
+    if ((position.id === undefined || position.id === null) && position._id) {
+      const derivedId = position._id?.getTimestamp?.()?.getTime?.();
+      position.id = derivedId || Date.now();
+    }
+    if (!position.createdAt) {
+      const createdAt = position._id?.getTimestamp?.();
+      if (createdAt instanceof Date) {
+        position.createdAt = createdAt.toISOString();
+      }
+    }
+    position.isPublished = Boolean(position.isPublished);
+    position.location = position.location || '';
+    position.employmentType = position.employmentType || '';
+    position.description = position.description || '';
+    position.requirements = position.requirements || '';
     position.status = parsePositionStatus(position.status) || 'Open';
   });
 }
 
 function buildPositionTitleMap(positions = []) {
-  return new Map(positions.map(pos => [String(pos.id), pos.title || null]));
+  return new Map(
+    positions.map(pos => [String(pos.id ?? pos._id), pos.title || null])
+  );
+}
+
+function resolveCandidateId(candidate) {
+  if (!candidate) return null;
+  if (candidate.id !== undefined && candidate.id !== null) {
+    return candidate.id;
+  }
+  if (candidate._id) return candidate._id.toString();
+  return null;
+}
+
+function buildCandidateCvSummary(candidate) {
+  if (!candidate) return null;
+  if (candidate.cv && candidate.cv.data) {
+    return {
+      filename: candidate.cv.filename,
+      contentType: candidate.cv.contentType || 'application/octet-stream'
+    };
+  }
+
+  if (candidate.cvFilePath) {
+    const filename =
+      candidate.cvFilename || candidate.cv?.filename || 'CV Document';
+    const contentType =
+      candidate.cvContentType || candidate.cv?.contentType || 'application/octet-stream';
+    return { filename, contentType, filePath: candidate.cvFilePath };
+  }
+
+  return null;
 }
 
 function buildCandidateSummary(candidate, positionMap = new Map()) {
   if (!candidate) return null;
+  const id = resolveCandidateId(candidate);
   const commentCount = Array.isArray(candidate.comments)
     ? candidate.comments.length
     : 0;
+  const cv = buildCandidateCvSummary(candidate);
+  const positionKey = candidate.positionId ?? candidate.positionLegacyId;
+  const contact = candidate.contact || candidate.email || candidate.phone || '';
 
   return {
-    id: candidate.id,
+    id,
     name: candidate.name || '',
-    contact: candidate.contact || '',
+    contact,
     email: candidate.email || null,
+    source: candidate.source || null,
     status: candidate.status || null,
     notes: candidate.notes || null,
-    positionId: candidate.positionId,
-    positionTitle: positionMap.get(String(candidate.positionId)) || null,
+    positionId: positionKey,
+    positionTitle: positionMap.get(String(positionKey)) || null,
     createdAt: candidate.createdAt,
     updatedAt: candidate.updatedAt,
     commentCount,
-    hasCv: Boolean(candidate.cv && candidate.cv.data),
-    cvFilename: candidate.cv?.filename || null,
-    cvContentType: candidate.cv?.contentType || null
+    hasCv: Boolean(cv),
+    cvFilename: cv?.filename || null,
+    cvContentType: cv?.contentType || null,
+    cv
   };
 }
 
@@ -1456,6 +1511,13 @@ app.use((req, res, next) => {
 });
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/hr', hrPositionsRoutes);
+app.use('/api/public', publicCareersRoutes);
+
+app.get('/careers', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'careers.html'));
+});
 
 function resolveToken(req) {
   const headerToken = req.headers.authorization?.split(' ')[1];
@@ -2371,14 +2433,25 @@ init().then(async () => {
     db.data.candidates = db.data.candidates || [];
     let list = db.data.candidates;
     if (positionId) {
-      list = list.filter(c => c.positionId == positionId);
+      list = list.filter(
+        c =>
+          c.positionId == positionId ||
+          c.positionLegacyId == positionId ||
+          c.positionObjectId?.toString?.() === positionId
+      );
     }
     const sanitized = list.map(c => {
-      const { cv, comments = [], ...rest } = c;
+      const { comments = [], ...rest } = c;
+      const cv = buildCandidateCvSummary(c);
+      const id = resolveCandidateId(c);
+      const contact = c.contact || c.email || c.phone || '';
       return {
         ...rest,
+        id,
+        contact,
         commentCount: comments.length,
-        cv: cv ? { filename: cv.filename, contentType: cv.contentType } : null
+        cv: cv ? { filename: cv.filename, contentType: cv.contentType } : null,
+        source: c.source || null
       };
     });
     res.json(sanitized);
@@ -2409,6 +2482,7 @@ init().then(async () => {
       name: name.trim(),
       contact: (contact || '').trim(),
       status,
+      source: req.body.source || 'internal',
       cv: {
         filename: cv.filename,
         contentType: cv.contentType || 'application/octet-stream',
@@ -2530,6 +2604,19 @@ init().then(async () => {
     await db.read();
     db.data.candidates = db.data.candidates || [];
     const candidate = db.data.candidates.find(c => c.id == req.params.id);
+    const filePath = candidate?.cvFilePath
+      ? path.join(__dirname, candidate.cvFilePath.replace(/^[/\\]+/, ''))
+      : null;
+    const hasFile = filePath && fs.existsSync(filePath);
+    if (hasFile) {
+      const filename = (candidate.cvFilename || candidate.cv?.filename || 'cv').replace(/"/g, '');
+      res.setHeader(
+        'Content-Type',
+        candidate.cvContentType || candidate.cv?.contentType || 'application/octet-stream'
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return fs.createReadStream(filePath).pipe(res);
+    }
     if (!candidate || !candidate.cv || !candidate.cv.data) {
       return res.status(404).json({ error: 'CV not found' });
     }
@@ -2558,19 +2645,25 @@ init().then(async () => {
       })
       .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
       .slice(0, 20)
-      .map(candidate => ({
-        id: candidate.id,
-        name: candidate.name,
-        contact: candidate.contact,
-        status: candidate.status,
-        positionId: candidate.positionId,
-        positionTitle: positionMap.get(String(candidate.positionId)) || null,
-        createdAt: candidate.createdAt,
-        updatedAt: candidate.updatedAt,
-        hasCv: !!(candidate.cv && candidate.cv.data),
-        cvFilename: candidate.cv?.filename || null,
-        cvContentType: candidate.cv?.contentType || null
-      }));
+      .map(candidate => {
+        const cv = buildCandidateCvSummary(candidate);
+        const id = resolveCandidateId(candidate);
+        const contact = candidate.contact || candidate.email || candidate.phone || '';
+        return {
+          id,
+          name: candidate.name,
+          contact,
+          status: candidate.status,
+          positionId: candidate.positionId,
+          positionTitle: positionMap.get(String(candidate.positionId)) || null,
+          createdAt: candidate.createdAt,
+          updatedAt: candidate.updatedAt,
+          hasCv: Boolean(cv),
+          cvFilename: cv?.filename || null,
+          cvContentType: cv?.contentType || null,
+          source: candidate.source || null
+        };
+      });
     res.json(matches);
   });
 

@@ -295,8 +295,16 @@ let emailSettingsHasRefreshToken = false;
 let emailRecipientOptions = [];
 
 function normalizeCandidateId(value) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
+  if (value === null || typeof value === 'undefined') return null;
+  if (typeof value === 'number') return value;
+  const str = String(value).trim();
+  return str ? str : null;
+}
+
+function formatCandidateSource(source) {
+  if (!source) return '';
+  const text = String(source).replace(/_/g, ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function cacheCandidateDetails(candidate) {
@@ -2690,11 +2698,15 @@ function renderRecruitmentCandidates() {
   const rows = recruitmentCandidates.map(candidate => {
     const statusOptions = PIPELINE_STATUSES.map(status => `<option value="${status}" ${status === candidate.status ? 'selected' : ''}>${status}</option>`).join('');
     const contact = candidate.contact ? escapeHtml(candidate.contact) : '<span class="text-muted">Not provided</span>';
+    const sourceLabel = candidate.source
+      ? `<div class="text-muted" style="font-size:12px;">Source: ${escapeHtml(formatCandidateSource(candidate.source))}</div>`
+      : '';
     return `
       <tr>
         <td>
           <div class="candidate-name-cell">
             <div class="candidate-name">${escapeHtml(candidate.name)}</div>
+            ${sourceLabel}
             <button type="button" class="md-button md-button--text candidate-details" data-candidate-id="${candidate.id}">
               <span class="material-symbols-rounded">info</span>
               View details
@@ -3374,7 +3386,11 @@ function populateCandidateDetails(candidate) {
   if (statusEl) statusEl.textContent = candidate?.status || '-';
 
   const createdEl = document.getElementById('candidateDetailsCreated');
-  if (createdEl) createdEl.textContent = formatRecruitmentDateTime(candidate?.createdAt) || '-';
+  if (createdEl) {
+    const created = formatRecruitmentDateTime(candidate?.createdAt) || '-';
+    const source = candidate?.source ? ` • Source: ${formatCandidateSource(candidate.source)}` : '';
+    createdEl.textContent = `${created}${source}`;
+  }
 
   const cvEl = document.getElementById('candidateDetailsCvFilename');
   const hasCv = !!candidate?.cv?.filename;

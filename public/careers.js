@@ -1,0 +1,169 @@
+const jobListEl = document.getElementById('job-list');
+const jobDetailEl = document.getElementById('job-detail');
+
+async function fetchJson(url, options = {}) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const error = new Error('Request failed');
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+}
+
+function renderPositions(positions = []) {
+  if (!jobListEl) return;
+  if (!Array.isArray(positions) || !positions.length) {
+    jobListEl.innerHTML = '<p class="text-gray-600">No openings are published right now. Please check back soon.</p>';
+    return;
+  }
+
+  jobListEl.innerHTML = positions
+    .map(position => {
+      const metaParts = [];
+      if (position.department) metaParts.push(position.department);
+      if (position.location) metaParts.push(position.location);
+      const meta = metaParts.length ? metaParts.join(' • ') : 'Brillar';
+      return `
+        <div class="bg-white rounded-lg p-4 shadow flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="text-lg font-semibold">${position.title}</div>
+            <div class="text-sm text-gray-500">${meta}</div>
+            ${position.employmentType ? `<div class="text-xs text-gray-400 mt-1">${position.employmentType}</div>` : ''}
+          </div>
+          <button class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 focus:outline-none" data-action="view" data-id="${position._id}">View &amp; Apply</button>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function renderDetail(position) {
+  if (!jobDetailEl) return;
+  const description = position.description || 'No description provided.';
+  const requirements = position.requirements || 'No specific requirements listed.';
+  jobDetailEl.innerHTML = `
+    <div class="flex items-start justify-between gap-3 mb-4 flex-wrap">
+      <div>
+        <h3 class="text-2xl font-bold text-blue-700">${position.title}</h3>
+        <div class="text-gray-600">${position.department || ''}${position.department && position.location ? ' • ' : ''}${position.location || ''}</div>
+        ${position.employmentType ? `<div class="text-sm text-gray-500">${position.employmentType}</div>` : ''}
+      </div>
+      <div class="text-sm text-gray-500">${new Date(position.createdAt || Date.now()).toLocaleDateString()}</div>
+    </div>
+    <div class="space-y-6">
+      <div>
+        <h4 class="text-lg font-semibold mb-2">Job Description</h4>
+        <p class="text-gray-700 whitespace-pre-line">${description}</p>
+      </div>
+      <div>
+        <h4 class="text-lg font-semibold mb-2">Requirements</h4>
+        <p class="text-gray-700 whitespace-pre-line">${requirements}</p>
+      </div>
+      <div class="border-t pt-6">
+        <h4 class="text-lg font-semibold mb-4">Apply for this role</h4>
+        <form id="apply-form" class="space-y-4" data-id="${position._id}">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+            <input name="fullName" required class="w-full border rounded px-3 py-2" placeholder="Your full name" />
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+              <input type="email" name="email" required class="w-full border rounded px-3 py-2" placeholder="you@example.com" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
+              <input type="tel" name="phone" required class="w-full border rounded px-3 py-2" placeholder="(+1) 555-1234" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">CV (PDF, DOC, DOCX) *</label>
+            <input type="file" name="cv" accept=".pdf,.doc,.docx" required class="w-full border rounded px-3 py-2 bg-white" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Cover Letter</label>
+            <textarea name="coverLetterText" rows="4" class="w-full border rounded px-3 py-2" placeholder="Optional"></textarea>
+          </div>
+          <div id="apply-message" class="text-sm"></div>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 focus:outline-none">Submit Application</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+async function loadPositions() {
+  try {
+    const positions = await fetchJson('/api/public/positions');
+    renderPositions(positions);
+  } catch (error) {
+    if (jobListEl) {
+      jobListEl.innerHTML = '<p class="text-red-600">Unable to load positions right now. Please try again later.</p>';
+    }
+  }
+}
+
+async function loadPositionDetail(id) {
+  if (!jobDetailEl) return;
+  jobDetailEl.innerHTML = '<p class="text-gray-600">Loading position...</p>';
+  try {
+    const position = await fetchJson(`/api/public/positions/${id}`);
+    renderDetail(position);
+  } catch (error) {
+    jobDetailEl.innerHTML = '<p class="text-red-600">Unable to load this position.</p>';
+  }
+}
+
+async function submitApplication(event) {
+  event.preventDefault();
+  const form = event.target;
+  const positionId = form.getAttribute('data-id');
+  if (!positionId) return;
+
+  const messageEl = document.getElementById('apply-message');
+  if (messageEl) {
+    messageEl.textContent = '';
+    messageEl.className = 'text-sm';
+  }
+
+  const formData = new FormData(form);
+
+  try {
+    const res = await fetch(`/api/public/positions/${positionId}/apply`, {
+      method: 'POST',
+      body: formData
+    });
+    if (!res.ok) throw new Error('failed');
+    await res.json();
+    if (messageEl) {
+      messageEl.textContent = 'Application received! Our team will be in touch soon.';
+      messageEl.className = 'text-sm text-green-600';
+    }
+    form.reset();
+  } catch (error) {
+    if (messageEl) {
+      messageEl.textContent = 'Could not submit application. Please check your details and try again.';
+      messageEl.className = 'text-sm text-red-600';
+    }
+  }
+}
+
+if (jobListEl) {
+  jobListEl.addEventListener('click', event => {
+    const button = event.target.closest('button[data-action="view"]');
+    if (!button) return;
+    const id = button.getAttribute('data-id');
+    loadPositionDetail(id);
+  });
+}
+
+if (jobDetailEl) {
+  jobDetailEl.addEventListener('submit', event => {
+    if (event.target && event.target.id === 'apply-form') {
+      submitApplication(event);
+    }
+  });
+}
+
+loadPositions();

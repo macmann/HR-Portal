@@ -214,13 +214,29 @@ const db = {
         fetchCollection('settings'),
         fetchCollection('salaries')
       ]);
+      const recruitmentApplications = Array.isArray(applications)
+        ? applications.filter(app => app && app.type === 'recruitment')
+        : [];
+      const leaveApplications = Array.isArray(applications)
+        ? applications.filter(app => !app || app.type !== 'recruitment')
+        : [];
       const settings = {};
       settingsDocs.forEach(doc => {
         if (!doc || (!doc._id && !doc.key)) return;
         const key = doc._id || doc.key;
         settings[key] = doc.value;
       });
-      this.data = { employees, applications, users, positions, candidates, holidays, settings, salaries };
+      this.data = {
+        employees,
+        applications: leaveApplications,
+        recruitmentApplications,
+        users,
+        positions,
+        candidates,
+        holidays,
+        settings,
+        salaries
+      };
       lastLoadedAt = Date.now();
       logDbTrace('DB read completed', {
         durationMs: Number((performance.now() - readStart).toFixed(2))
@@ -239,6 +255,7 @@ const db = {
     const {
       employees = [],
       applications = [],
+      recruitmentApplications = [],
       users = [],
       positions = [],
       candidates = [],
@@ -247,9 +264,14 @@ const db = {
       salaries = []
     } = this.data;
 
+    const mergedApplications = [
+      ...(Array.isArray(applications) ? applications : []),
+      ...(Array.isArray(recruitmentApplications) ? recruitmentApplications : [])
+    ];
+
     await Promise.all([
       syncCollection('employees', employees),
-      syncCollection('applications', applications),
+      syncCollection('applications', mergedApplications),
       syncCollection('users', users),
       syncCollection('positions', positions),
       syncCollection('candidates', candidates),
