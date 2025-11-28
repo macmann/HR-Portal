@@ -1,10 +1,4 @@
-const pdfParseModule = require("pdf-parse");
-
-// Support both CommonJS and ESM-style default export
-const pdfParse =
-  typeof pdfParseModule === "function"
-    ? pdfParseModule
-    : pdfParseModule.default;
+const { PDFParse } = require("pdf-parse");
 const fs = require("fs");
 const path = require("path");
 
@@ -67,8 +61,16 @@ async function extractTextFromPdf(cvPath) {
   const absolutePath = resolveCvPath(cvPath);
 
   const buffer = fs.readFileSync(absolutePath);
-  const result = await pdfParse(buffer);
-  return result.text || "";
+  const parser = new PDFParse({ data: buffer });
+
+  try {
+    const result = await parser.getText();
+    return result.text || "";
+  } finally {
+    if (typeof parser.destroy === "function") {
+      await parser.destroy();
+    }
+  }
 }
 
 module.exports = { extractTextFromPdf };
