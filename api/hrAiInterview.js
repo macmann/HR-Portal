@@ -5,6 +5,29 @@ const { generateInterviewToken } = require('../utils/token');
 
 const router = express.Router();
 
+const PUBLIC_APP_URL = process.env.PUBLIC_APP_URL || process.env.APP_BASE_URL || '';
+
+function buildCandidateName(candidate) {
+  if (!candidate) return null;
+  const parts = [];
+  if (candidate.firstName) parts.push(candidate.firstName);
+  if (candidate.lastName) parts.push(candidate.lastName);
+  const combined = parts.join(' ').trim();
+  if (combined) return combined;
+  return candidate.fullName || candidate.name || candidate.email || null;
+}
+
+function buildInterviewUrl(req, interviewPath) {
+  if (!interviewPath) return '';
+  const base =
+    PUBLIC_APP_URL || req.get('origin') || `${req.protocol}://${req.get('host')}`;
+  try {
+    return new URL(interviewPath, base).toString();
+  } catch (err) {
+    return interviewPath;
+  }
+}
+
 // TODO: apply auth middleware if available
 
 router.get('/ai-interview/application/:applicationId', async (req, res) => {
@@ -121,12 +144,40 @@ router.post('/ai-interview/sessions', async (req, res) => {
     const result = await db.collection('ai_interview_sessions').insertOne(sessionDoc);
 
     const interviewPath = `/ai-interview/${token}`;
+    const interviewUrl = buildInterviewUrl(req, interviewPath);
+
+    const sendEmail = req.app?.locals?.sendEmail;
+    let emailSent = false;
+    if (candidate.email && typeof sendEmail === 'function') {
+      const candidateName = buildCandidateName(candidate) || 'there';
+      const positionTitle = position.title || 'the position';
+      const emailLines = [
+        `Hi ${candidateName},`,
+        '',
+        `You have been invited to complete an AI interview for ${positionTitle}.`,
+        `Start your interview here: ${interviewUrl || interviewPath}`,
+        '',
+        'Please complete the interview at your earliest convenience.'
+      ];
+      try {
+        await sendEmail(
+          candidate.email,
+          `Your AI interview for ${positionTitle}`,
+          emailLines.join('\n')
+        );
+        emailSent = true;
+      } catch (err) {
+        console.error('Failed to send AI interview invitation email:', err);
+      }
+    }
 
     return res.status(201).json({
       sessionId: result.insertedId,
       interviewPath,
+      interviewUrl,
       token,
-      candidateEmail: candidate.email
+      candidateEmail: candidate.email,
+      emailSent
     });
   } catch (err) {
     console.error('Error creating AI interview session:', err);

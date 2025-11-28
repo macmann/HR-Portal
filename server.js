@@ -542,6 +542,8 @@ async function sendEmail(to, subject, text) {
   }
 }
 
+app.locals.sendEmail = sendEmail;
+
 function findEmployeeKey(emp, matcher) {
   if (!emp || typeof emp !== 'object') return null;
   return Object.keys(emp).find(key => {
