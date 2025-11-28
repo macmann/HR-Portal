@@ -2,8 +2,23 @@ const fs = require('fs');
 const path = require('path');
 const pdfParse = require('pdf-parse');
 
-async function extractTextFromPdf(filePath) {
+function resolveCvPath(filePath) {
   const resolvedPath = path.resolve(filePath);
+  if (fs.existsSync(resolvedPath)) {
+    return resolvedPath;
+  }
+
+  const trimmedPath = filePath.replace(/^[/\\]+/, '');
+  const fallbackPath = path.join(__dirname, '..', trimmedPath);
+  if (fs.existsSync(fallbackPath)) {
+    return fallbackPath;
+  }
+
+  throw new Error(`CV file not found at ${resolvedPath}`);
+}
+
+async function extractTextFromPdf(filePath) {
+  const resolvedPath = resolveCvPath(filePath);
   const fileBuffer = await fs.promises.readFile(resolvedPath);
   const ext = path.extname(resolvedPath).toLowerCase();
 
@@ -15,4 +30,4 @@ async function extractTextFromPdf(filePath) {
   return fileBuffer.toString('utf8');
 }
 
-module.exports = { extractTextFromPdf };
+module.exports = { extractTextFromPdf, resolveCvPath };
