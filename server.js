@@ -4270,6 +4270,10 @@ init().then(async () => {
 
     const days = getLeaveDays(newApp);
     const balance = getLeaveBalanceValue(leaveBalances, normalizedType);
+    const validationError = validateLeaveBalance(balance, normalizedType);
+    if (validationError) {
+      return { status: 400, error: validationError };
+    }
     if (balance < days) {
       return { status: 400, error: 'Insufficient leave balance.' };
     }
@@ -4327,6 +4331,13 @@ init().then(async () => {
     }
 
     return { status: 201, application: newApp };
+  }
+
+  function validateLeaveBalance(balance, leaveType) {
+    if (balance < 0) {
+      return 'Selected leave type balance is below zero. Please contact HR to resolve.';
+    }
+    return null;
   }
 
   async function handleLeaveApplicationRequest(req, res) {
