@@ -25,6 +25,7 @@ const hrAiInterviewRoutes = require('./api/hrAiInterview');
 const hrApplicationsRoutes = require('./api/hrApplications');
 const publicCareersRoutes = require('./api/publicCareers');
 const publicAiInterviewRoutes = require('./api/publicAiInterview');
+const { getUploadsRoot } = require('./utils/uploadPaths');
 
 const app = express();
 
@@ -1608,7 +1609,7 @@ app.use((req, res, next) => {
 });
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(getUploadsRoot()));
 app.use('/api/hr', hrPositionsRoutes);
 app.use('/api/hr', hrAiInterviewRoutes);
 app.use('/api/hr', hrApplicationsRoutes);
