@@ -102,7 +102,7 @@ function getLeaveTypeAllocation(type, leaveBalances = {}) {
 }
 
 function getLeaveCycleStart(leaveBalances = {}) {
-  const raw = leaveBalances.accrualStartDate;
+  const raw = leaveBalances.cycleStart || leaveBalances.accrualStartDate;
   const parsed = raw ? new Date(raw) : null;
   if (parsed && !Number.isNaN(parsed.getTime())) return parsed;
 
@@ -112,43 +112,25 @@ function getLeaveCycleStart(leaveBalances = {}) {
   return julyStart;
 }
 
-function calculateUsedLeaveByType(applications = [], cycleStartDate = null) {
-  const usage = { annual: 0, casual: 0, medical: 0 };
-  const hasCycleStart = cycleStartDate instanceof Date && !Number.isNaN(cycleStartDate?.getTime());
-  const cycleStartMs = hasCycleStart ? cycleStartDate.getTime() : null;
-
-  applications.forEach(app => {
-    const status = String(app.status || '').toLowerCase();
-    if (status !== 'approved') return;
-    if (!SUPPORTED_LEAVE_TYPES.includes(app.type)) return;
-
-    const toDate = new Date(app.to);
-    const fromDate = new Date(app.from);
-    if (Number.isNaN(toDate.getTime()) || Number.isNaN(fromDate.getTime())) return;
-    if (cycleStartMs && toDate.getTime() < cycleStartMs) return;
-
-    const days = calculateLeaveDays(app.from, app.to, app.halfDay);
-    const safeDays = Number.isFinite(days) ? days : 0;
-    usage[app.type] = roundToOneDecimal((usage[app.type] || 0) + safeDays);
-  });
-
-  return usage;
-}
-
 function buildAvailableLeaveState(leaveBalances = {}, applications = []) {
   const cycleStart = getLeaveCycleStart(leaveBalances);
-  const usage = calculateUsedLeaveByType(applications, cycleStart);
-  const normalizedBalances = normalizeLeaveBalanceMap(leaveBalances);
+  const usage = { annual: 0, casual: 0, medical: 0 };
   const available = {};
+  const accrued = {};
+  const normalizedBalances = normalizeLeaveBalanceMap(leaveBalances);
 
   SUPPORTED_LEAVE_TYPES.forEach(type => {
-    const used = usage[type] || 0;
-    const allocation = getLeaveTypeAllocation(type, leaveBalances) || normalizedBalances[type] + used;
-    const earned = roundToOneDecimal(Math.min(allocation, normalizedBalances[type] + used));
-    available[type] = roundToOneDecimal(Math.max(0, earned - used));
+    const entry = leaveBalances[type] || {};
+    const takenValue = Number.isFinite(entry.taken) ? entry.taken : usage[type] || 0;
+    usage[type] = roundToOneDecimal(takenValue);
+    const accruedValue = Number.isFinite(entry.accrued)
+      ? entry.accrued
+      : roundToOneDecimal((normalizedBalances[type] || 0) + usage[type]);
+    accrued[type] = roundToOneDecimal(accruedValue);
+    available[type] = roundToOneDecimal(normalizedBalances[type]);
   });
 
-  return { cycleStart, usage, available };
+  return { cycleStart, usage, available, accrued };
 }
 
 function setBalanceValue(elementId, value) {
@@ -6534,8 +6516,9 @@ function buildEmployeePayload(formEl, fields = []) {
   }
   if (leaveKeys.length) {
     payload.leaveBalances = {
-      accrualStartDate: null,
-      nextAccrualMonth: null
+      cycleStart: null,
+      cycleEnd: null,
+      lastAccrualRun: null
     };
     leaveKeys.forEach(key => {
       const raw = data[key];
@@ -6744,8 +6727,9 @@ async function onEmpFormSubmit(ev) {
       annual: buildLeaveBalanceEntry(+document.getElementById('empAnnual').value, 'annual'),
       casual: buildLeaveBalanceEntry(+document.getElementById('empCasual').value, 'casual'),
       medical: buildLeaveBalanceEntry(+document.getElementById('empMedical').value, 'medical'),
-      accrualStartDate: null,
-      nextAccrualMonth: null
+      cycleStart: null,
+      cycleEnd: null,
+      lastAccrualRun: null
     }
   };
   const url    = editId ? `/employees/${editId}` : '/employees';

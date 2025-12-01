@@ -22,22 +22,29 @@ const { db, init } = require('./db');
       status: row.Status?.toLowerCase() === 'inactive' ? 'inactive' : 'active',
       leaveBalances: {
         annual: {
-          balance: Number(row['Annual Leave'] ?? 10),
+          balance: Number(row['Annual Leave'] ?? 0),
           yearlyAllocation: 10,
-          monthlyAccrual: 10 / 12
+          monthlyAccrual: 10 / 12,
+          accrued: 0,
+          taken: 0
         },
         casual: {
-          balance: Number(row['Casual Leave'] ?? 5),
+          balance: Number(row['Casual Leave'] ?? 0),
           yearlyAllocation: 5,
-          monthlyAccrual: 5 / 12
+          monthlyAccrual: 5 / 12,
+          accrued: 0,
+          taken: 0
         },
         medical: {
-          balance: Number(row['Medical Leave'] ?? 14),
+          balance: Number(row['Medical Leave'] ?? 0),
           yearlyAllocation: 14,
-          monthlyAccrual: 14 / 12
+          monthlyAccrual: 14 / 12,
+          accrued: 0,
+          taken: 0
         },
-        accrualStartDate: null,
-        nextAccrualMonth: null
+        cycleStart: null,
+        cycleEnd: null,
+        lastAccrualRun: null
       },
       ...row
     };

@@ -11,6 +11,15 @@ const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const { db, init, getDatabase } = require('./db');
+const {
+  DEFAULT_LEAVE_BALANCES,
+  SUPPORTED_LEAVE_TYPES,
+  cloneDefaultLeaveBalances,
+  roundToOneDecimal,
+  recalculateLeaveBalancesForCycle,
+  getCurrentCycleRange,
+  buildEmployeeLeaveState
+} = require('./services/leaveAccrualService');
 const { parse } = require('csv-parse/sync');
 const {
   ensureIndexes: ensurePairingIndexes,
@@ -97,33 +106,7 @@ app.options(
   (req, res) => res.sendStatus(204)
 );
 
-// Default leave balance values assigned to new employees
-const DEFAULT_LEAVE_BALANCES = {
-  annual: {
-    balance: 0,
-    yearlyAllocation: 10,
-    monthlyAccrual: 10 / 12
-  },
-  casual: {
-    balance: 0,
-    yearlyAllocation: 5,
-    monthlyAccrual: 5 / 12
-  },
-  medical: {
-    balance: 0,
-    yearlyAllocation: 14,
-    monthlyAccrual: 14 / 12
-  },
-  accrualStartDate: null,
-  nextAccrualMonth: null
-};
-const SUPPORTED_LEAVE_TYPES = ['annual', 'casual', 'medical'];
-
-function roundToOneDecimal(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return Math.round(numeric * 10) / 10;
-}
+// Default leave balance values assigned to new employees are provided by the leaveAccrualService.
 
 // Payload limit for incoming requests (default 3 MB to accommodate CV uploads)
 const BODY_LIMIT = process.env.BODY_LIMIT || '3mb';
@@ -868,18 +851,9 @@ function assignEmployeeNumber(employee, employees = []) {
   employee[preferredKey] = nextNumber;
 }
 
-function cloneDefaultLeaveBalances() {
-  return {
-    annual: { ...DEFAULT_LEAVE_BALANCES.annual },
-    casual: { ...DEFAULT_LEAVE_BALANCES.casual },
-    medical: { ...DEFAULT_LEAVE_BALANCES.medical },
-    accrualStartDate: DEFAULT_LEAVE_BALANCES.accrualStartDate,
-    nextAccrualMonth: DEFAULT_LEAVE_BALANCES.nextAccrualMonth
-  };
-}
-
 function normalizeLeaveBalanceEntry(entry, defaults) {
-  const baseDefaults = defaults || { balance: 0, yearlyAllocation: 0, monthlyAccrual: 0 };
+  const baseDefaults =
+    defaults || { balance: 0, yearlyAllocation: 0, monthlyAccrual: 0, accrued: 0, taken: 0 };
   const balanceValue = Number(
     typeof entry === 'object' && entry !== null && 'balance' in entry
       ? entry.balance
@@ -898,6 +872,16 @@ function normalizeLeaveBalanceEntry(entry, defaults) {
       : baseDefaults.monthlyAccrual
   );
 
+  const accrued = Number(
+    typeof entry === 'object' && entry !== null && 'accrued' in entry
+      ? entry.accrued
+      : baseDefaults.accrued
+  );
+
+  const taken = Number(
+    typeof entry === 'object' && entry !== null && 'taken' in entry ? entry.taken : baseDefaults.taken
+  );
+
   return {
     balance: roundToOneDecimal(
       Number.isFinite(balanceValue) ? balanceValue : baseDefaults.balance
@@ -907,94 +891,10 @@ function normalizeLeaveBalanceEntry(entry, defaults) {
       : baseDefaults.yearlyAllocation,
     monthlyAccrual: Number.isFinite(monthlyAccrual)
       ? monthlyAccrual
-      : baseDefaults.monthlyAccrual
+      : baseDefaults.monthlyAccrual,
+    accrued: roundToOneDecimal(Number.isFinite(accrued) ? accrued : baseDefaults.accrued),
+    taken: roundToOneDecimal(Number.isFinite(taken) ? taken : baseDefaults.taken)
   };
-}
-
-function normalizeNullableDate(value) {
-  if (!value) return null;
-  const parsed = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function getCurrentCycleStart(now = new Date()) {
-  const year = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
-  return new Date(year, 6, 1);
-}
-
-function getFirstDayOfNextMonth(date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 1);
-}
-
-function getFirstUpcomingMonthStart(fromDate, now = new Date()) {
-  const todayMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  let candidate = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
-
-  while (candidate < fromDate) {
-    candidate = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 1);
-  }
-
-  while (candidate < todayMonthStart) {
-    candidate = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 1);
-  }
-
-  return candidate;
-}
-
-function ensureAccrualSchedule(emp, options = {}) {
-  if (!emp || typeof emp !== 'object') return false;
-
-  const now = options.now instanceof Date ? options.now : new Date();
-  let updated = false;
-
-  const normalizedEffectiveStart = normalizeNullableDate(emp.effectiveStartDate);
-  const internshipStart = normalizeNullableDate(emp.internshipStartDate);
-  const startDate = normalizeNullableDate(emp.startDate);
-  const fallbackStartDate = getCurrentCycleStart(now);
-  const effectiveStartDate =
-    normalizedEffectiveStart || internshipStart || startDate || fallbackStartDate;
-
-  if (!normalizedEffectiveStart && effectiveStartDate) {
-    emp.effectiveStartDate = effectiveStartDate;
-    updated = true;
-  } else if (normalizedEffectiveStart && emp.effectiveStartDate !== normalizedEffectiveStart) {
-    emp.effectiveStartDate = normalizedEffectiveStart;
-    updated = true;
-  }
-
-  if (!emp.leaveBalances || typeof emp.leaveBalances !== 'object') {
-    emp.leaveBalances = cloneDefaultLeaveBalances();
-    updated = true;
-  }
-
-  const accrualStartDate =
-    options.accrualStartDate ?? normalizeNullableDate(emp.leaveBalances.accrualStartDate);
-  if (emp.leaveBalances.accrualStartDate !== accrualStartDate) {
-    emp.leaveBalances.accrualStartDate = accrualStartDate;
-    updated = true;
-  }
-
-  if (!accrualStartDate && effectiveStartDate) {
-    emp.leaveBalances.accrualStartDate = getFirstDayOfNextMonth(effectiveStartDate);
-    updated = true;
-  }
-
-  const nextAccrualMonth =
-    options.nextAccrualMonth ?? normalizeNullableDate(emp.leaveBalances.nextAccrualMonth);
-  if (emp.leaveBalances.nextAccrualMonth !== nextAccrualMonth) {
-    emp.leaveBalances.nextAccrualMonth = nextAccrualMonth;
-    updated = true;
-  }
-
-  if (!nextAccrualMonth && emp.leaveBalances.accrualStartDate) {
-    emp.leaveBalances.nextAccrualMonth = getFirstUpcomingMonthStart(
-      emp.leaveBalances.accrualStartDate,
-      now
-    );
-    updated = true;
-  }
-
-  return updated;
 }
 
 function getLeaveBalanceValue(leaveBalances, type) {
@@ -1024,45 +924,36 @@ function ensureLeaveBalances(emp, options = {}) {
   if (!emp) return false;
   if (!emp.leaveBalances || typeof emp.leaveBalances !== 'object') {
     emp.leaveBalances = cloneDefaultLeaveBalances();
-    // Continue to populate derived dates for brand new leave balances.
-    return ensureAccrualSchedule(emp, options);
   }
 
   let updated = false;
+  const cycle = getCurrentCycleRange(options.now instanceof Date ? options.now : new Date());
+
   SUPPORTED_LEAVE_TYPES.forEach(type => {
     const defaults = DEFAULT_LEAVE_BALANCES[type];
     const current = emp.leaveBalances[type];
     const normalized = normalizeLeaveBalanceEntry(current, defaults);
-    if (
-      !current ||
-      typeof current !== 'object' ||
-      current.balance !== normalized.balance ||
-      current.yearlyAllocation !== normalized.yearlyAllocation ||
-      current.monthlyAccrual !== normalized.monthlyAccrual
-    ) {
-      emp.leaveBalances[type] = { ...defaults, ...normalized };
+    const merged = { ...defaults, ...normalized };
+    if (JSON.stringify(current || {}) !== JSON.stringify(merged)) {
+      emp.leaveBalances[type] = merged;
       updated = true;
     }
   });
 
-  const accrualStartDate = normalizeNullableDate(emp.leaveBalances.accrualStartDate);
-  const nextAccrualMonth = normalizeNullableDate(emp.leaveBalances.nextAccrualMonth);
-  if (emp.leaveBalances.accrualStartDate !== accrualStartDate) {
-    emp.leaveBalances.accrualStartDate = accrualStartDate;
+  if (!emp.leaveBalances.cycleStart) {
+    emp.leaveBalances.cycleStart = cycle.start;
     updated = true;
   }
-  if (emp.leaveBalances.nextAccrualMonth !== nextAccrualMonth) {
-    emp.leaveBalances.nextAccrualMonth = nextAccrualMonth;
+  if (!emp.leaveBalances.cycleEnd) {
+    emp.leaveBalances.cycleEnd = cycle.end;
+    updated = true;
+  }
+  if (!('lastAccrualRun' in emp.leaveBalances)) {
+    emp.leaveBalances.lastAccrualRun = null;
     updated = true;
   }
 
-  const accrualScheduleUpdated = ensureAccrualSchedule(emp, {
-    now: options.now,
-    accrualStartDate,
-    nextAccrualMonth
-  });
-
-  return updated || accrualScheduleUpdated;
+  return updated;
 }
 
 function normalizeBooleanFlag(value, defaultValue = false) {
@@ -4277,12 +4168,9 @@ init().then(async () => {
 
     const days = getLeaveDays(newApp);
     const balance = getLeaveBalanceValue(leaveBalances, normalizedType);
-    const validationError = validateLeaveBalance(balance, normalizedType);
+    const validationError = validateLeaveBalance(balance, normalizedType, days);
     if (validationError) {
       return { status: 400, error: validationError };
-    }
-    if (balance < days) {
-      return { status: 400, error: 'Insufficient leave balance.' };
     }
 
     setLeaveBalanceValue(leaveBalances, normalizedType, balance - days);
@@ -4340,9 +4228,11 @@ init().then(async () => {
     return { status: 201, application: newApp };
   }
 
-  function validateLeaveBalance(balance, leaveType) {
-    if (balance < 0) {
-      return 'Selected leave type balance is below zero. Please contact HR to resolve.';
+  function validateLeaveBalance(balance, leaveType, requestedDays) {
+    const days = Number.isFinite(requestedDays) ? requestedDays : 0;
+    const projected = roundToOneDecimal((Number(balance) || 0) - days);
+    if (projected < 0) {
+      return `Insufficient ${leaveType} balance. Current balance: ${roundToOneDecimal(balance)} days. You cannot apply for more of this leave type until your balance is non-negative.`;
     }
     return null;
   }
