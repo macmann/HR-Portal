@@ -3,9 +3,12 @@ const { db } = require('../db');
 const SUPPORTED_LEAVE_TYPES = ['annual', 'casual', 'medical'];
 
 const DEFAULT_LEAVE_BALANCES = {
-  annual: { balance: 0, yearlyAllocation: 10, monthlyAccrual: 10 / 12 },
-  casual: { balance: 0, yearlyAllocation: 5, monthlyAccrual: 5 / 12 },
-  medical: { balance: 0, yearlyAllocation: 14, monthlyAccrual: 14 / 12 }
+  annual: { balance: 0, yearlyAllocation: 10, monthlyAccrual: 10 / 12, accrued: 0, taken: 0 },
+  casual: { balance: 0, yearlyAllocation: 5, monthlyAccrual: 5 / 12, accrued: 0, taken: 0 },
+  medical: { balance: 0, yearlyAllocation: 14, monthlyAccrual: 14 / 12, accrued: 0, taken: 0 },
+  cycleStart: null,
+  cycleEnd: null,
+  lastAccrualRun: null
 };
 
 function roundToOneDecimal(value) {
@@ -20,8 +23,27 @@ function normalizeNullableDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function startOfDay(date) {
+  if (!(date instanceof Date)) return null;
+  const clone = new Date(date);
+  clone.setHours(0, 0, 0, 0);
+  return clone;
+}
+
+function getCurrentCycleRange(now = new Date()) {
+  const base = new Date(now);
+  const year = base.getMonth() >= 6 ? base.getFullYear() : base.getFullYear() - 1;
+  const start = new Date(year, 6, 1);
+  const end = new Date(year + 1, 5, 30, 23, 59, 59, 999);
+  return { start, end };
+}
+
 function getMonthStart(date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getMonthEnd(date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
 }
 
 function getNextMonth(date) {
@@ -29,7 +51,13 @@ function getNextMonth(date) {
 }
 
 function normalizeLeaveBalanceEntry(entry, defaults) {
-  const baseDefaults = defaults || { balance: 0, yearlyAllocation: 0, monthlyAccrual: 0 };
+  const baseDefaults = defaults || {
+    balance: 0,
+    yearlyAllocation: 0,
+    monthlyAccrual: 0,
+    accrued: 0,
+    taken: 0
+  };
 
   const balance = Number(
     typeof entry === 'object' && entry !== null && 'balance' in entry ? entry.balance : entry
@@ -44,6 +72,16 @@ function normalizeLeaveBalanceEntry(entry, defaults) {
       ? entry.monthlyAccrual
       : baseDefaults.monthlyAccrual
   );
+  const accrued = Number(
+    typeof entry === 'object' && entry !== null && 'accrued' in entry
+      ? entry.accrued
+      : baseDefaults.accrued
+  );
+  const taken = Number(
+    typeof entry === 'object' && entry !== null && 'taken' in entry
+      ? entry.taken
+      : baseDefaults.taken
+  );
 
   return {
     balance: roundToOneDecimal(Number.isFinite(balance) ? balance : baseDefaults.balance),
@@ -52,81 +90,266 @@ function normalizeLeaveBalanceEntry(entry, defaults) {
       : baseDefaults.yearlyAllocation,
     monthlyAccrual: Number.isFinite(monthlyAccrual)
       ? monthlyAccrual
-      : baseDefaults.monthlyAccrual
+      : baseDefaults.monthlyAccrual,
+    accrued: roundToOneDecimal(Number.isFinite(accrued) ? accrued : baseDefaults.accrued),
+    taken: roundToOneDecimal(Number.isFinite(taken) ? taken : baseDefaults.taken)
   };
 }
 
-function accrueEmployeeLeave(emp, monthStart) {
-  if (!emp || typeof emp !== 'object') return false;
-
-  if (!emp.leaveBalances || typeof emp.leaveBalances !== 'object') {
-    emp.leaveBalances = {
-      annual: { ...DEFAULT_LEAVE_BALANCES.annual },
-      casual: { ...DEFAULT_LEAVE_BALANCES.casual },
-      medical: { ...DEFAULT_LEAVE_BALANCES.medical },
-      accrualStartDate: null,
-      nextAccrualMonth: null
-    };
-  }
-
-  const accrualStartDate = normalizeNullableDate(emp.leaveBalances.accrualStartDate);
-  const nextAccrualMonth = normalizeNullableDate(emp.leaveBalances.nextAccrualMonth);
-
-  emp.leaveBalances.accrualStartDate = accrualStartDate;
-  emp.leaveBalances.nextAccrualMonth = nextAccrualMonth;
-
-  if (!accrualStartDate) return false;
-
-  const accrualStartMonth = getMonthStart(accrualStartDate);
-  const targetAccrualMonth = nextAccrualMonth ? getMonthStart(nextAccrualMonth) : accrualStartMonth;
-
-  if (monthStart < accrualStartMonth || monthStart < targetAccrualMonth) {
-    return false;
-  }
-
-  let updated = false;
-
-  SUPPORTED_LEAVE_TYPES.forEach(type => {
-    const defaults = DEFAULT_LEAVE_BALANCES[type];
-    const current = normalizeLeaveBalanceEntry(emp.leaveBalances[type], defaults);
-    const uncappedBalance = roundToOneDecimal(current.balance + current.monthlyAccrual);
-    const cappedBalance = Math.min(uncappedBalance, current.yearlyAllocation || defaults.yearlyAllocation || 0);
-    const newBalance = roundToOneDecimal(cappedBalance);
-
-    emp.leaveBalances[type] = { ...defaults, ...current, balance: newBalance };
-    updated = true;
-  });
-
-  emp.leaveBalances.nextAccrualMonth = getNextMonth(targetAccrualMonth);
-
-  return updated;
+function cloneDefaultLeaveBalances() {
+  return {
+    annual: { ...DEFAULT_LEAVE_BALANCES.annual },
+    casual: { ...DEFAULT_LEAVE_BALANCES.casual },
+    medical: { ...DEFAULT_LEAVE_BALANCES.medical },
+    cycleStart: DEFAULT_LEAVE_BALANCES.cycleStart,
+    cycleEnd: DEFAULT_LEAVE_BALANCES.cycleEnd,
+    lastAccrualRun: DEFAULT_LEAVE_BALANCES.lastAccrualRun
+  };
 }
 
-async function accrueMonthlyLeave(now = new Date()) {
+function resolveEmploymentStart(employee, cycleStart) {
+  const primary = normalizeNullableDate(employee?.internshipStartDate);
+  const secondary = normalizeNullableDate(
+    employee?.fullTimeStartDate ?? employee?.startDate ?? employee?.start_date
+  );
+  return startOfDay(primary || secondary || cycleStart);
+}
+
+function resolveEmploymentEnd(employee, cycleEnd) {
+  const explicit = normalizeNullableDate(employee?.endDate ?? employee?.fullTimeEndDate);
+  return explicit ? startOfDay(explicit) : startOfDay(cycleEnd);
+}
+
+function getEffectiveEmploymentWindow(employee, cycleRange) {
+  const cycleStart = startOfDay(cycleRange.start);
+  const cycleEnd = startOfDay(cycleRange.end);
+  const employmentStart = resolveEmploymentStart(employee, cycleStart);
+  const employmentEnd = resolveEmploymentEnd(employee, cycleEnd);
+
+  const effectiveStart = employmentStart > cycleStart ? employmentStart : cycleStart;
+  const effectiveEnd = employmentEnd < cycleEnd ? employmentEnd : cycleEnd;
+
+  if (effectiveStart > effectiveEnd) {
+    return null;
+  }
+
+  return { effectiveStart, effectiveEnd };
+}
+
+function listAccrualMonths(window, asOfDate) {
+  if (!window) return [];
+  const cutoffDate = startOfDay(asOfDate instanceof Date ? asOfDate : new Date());
+  const accrualEnd = window.effectiveEnd < cutoffDate ? window.effectiveEnd : cutoffDate;
+  const months = [];
+
+  let cursor = getMonthStart(window.effectiveStart);
+  while (cursor <= accrualEnd) {
+    const monthEnd = getMonthEnd(cursor);
+    const activeStart = cursor < window.effectiveStart ? window.effectiveStart : cursor;
+    const activeEnd = monthEnd > window.effectiveEnd ? window.effectiveEnd : monthEnd;
+    const accrualBoundary = monthEnd < accrualEnd ? monthEnd : accrualEnd;
+
+    if (accrualBoundary >= activeStart) {
+      months.push(cursor);
+    }
+
+    cursor = getNextMonth(cursor);
+  }
+
+  return months;
+}
+
+function calculateAccruedLeaveForEmployee(employee, cycleRange, asOfDate = new Date()) {
+  const window = getEffectiveEmploymentWindow(employee, cycleRange);
+  if (!window) {
+    return { annual: 0, casual: 0, medical: 0, monthsAccrued: [] };
+  }
+
+  const accrualMonths = listAccrualMonths(window, asOfDate);
+  const monthlyAccruals = {
+    annual: DEFAULT_LEAVE_BALANCES.annual.monthlyAccrual,
+    casual: DEFAULT_LEAVE_BALANCES.casual.monthlyAccrual,
+    medical: DEFAULT_LEAVE_BALANCES.medical.monthlyAccrual
+  };
+
+  const totals = { annual: 0, casual: 0, medical: 0 };
+  accrualMonths.forEach(() => {
+    SUPPORTED_LEAVE_TYPES.forEach(type => {
+      totals[type] += monthlyAccruals[type] || DEFAULT_LEAVE_BALANCES[type].monthlyAccrual;
+    });
+  });
+
+  const roundedTotals = Object.fromEntries(
+    Object.entries(totals).map(([key, value]) => [key, roundToOneDecimal(value)])
+  );
+
+  return { ...roundedTotals, monthsAccrued: accrualMonths };
+}
+
+function buildHolidaySet(holidays = []) {
+  return new Set(
+    holidays
+      .map(entry => (typeof entry === 'string' ? entry : entry?.date))
+      .filter(Boolean)
+  );
+}
+
+function getLeaveDaysWithin(app, startDate, endDate, holidaySet = new Set()) {
+  const from = new Date(app.from);
+  const to = new Date(app.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 0;
+
+  const cappedStart = from < startDate ? new Date(startDate) : from;
+  const cappedEnd = to > endDate ? new Date(endDate) : to;
+  if (cappedEnd < cappedStart) return 0;
+
+  if (app.halfDay) {
+    const isWithinRange = cappedStart.getTime() === from.getTime();
+    if (!isWithinRange) return 0;
+    const day = from.getDay();
+    const iso = from.toISOString().split('T')[0];
+    return day === 0 || day === 6 || holidaySet.has(iso) ? 0 : 0.5;
+  }
+
+  let days = 0;
+  const cursor = new Date(cappedStart);
+  while (cursor <= cappedEnd) {
+    const iso = cursor.toISOString().split('T')[0];
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6 && !holidaySet.has(iso)) {
+      days += 1;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return days;
+}
+
+function calculateLeaveTakenForEmployee(employeeId, applications, cycleRange, asOfDate, holidays) {
+  const totals = { annual: 0, casual: 0, medical: 0 };
+  if (!Array.isArray(applications)) return totals;
+
+  const startBoundary = startOfDay(cycleRange.start);
+  const endBoundary = (() => {
+    const endCap = startOfDay(asOfDate instanceof Date ? asOfDate : new Date());
+    const capped = cycleRange.end < endCap ? cycleRange.end : endCap;
+    return startOfDay(capped);
+  })();
+
+  const holidaySet = buildHolidaySet(holidays);
+
+  applications.forEach(app => {
+    if (!app || app.employeeId != employeeId) return;
+    const status = String(app.status || '').toLowerCase();
+    if (status !== 'approved') return;
+    if (!SUPPORTED_LEAVE_TYPES.includes(app.type)) return;
+
+    const from = new Date(app.from);
+    const to = new Date(app.to);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return;
+    if (to < startBoundary || from > endBoundary) return;
+
+    const days = getLeaveDaysWithin(app, startBoundary, endBoundary, holidaySet);
+    totals[app.type] = roundToOneDecimal((totals[app.type] || 0) + days);
+  });
+
+  return totals;
+}
+
+function buildEmployeeLeaveState(employee, applications, options = {}) {
+  const asOfDate = options.asOfDate instanceof Date ? options.asOfDate : new Date();
+  const cycleRange = options.cycleRange || getCurrentCycleRange(asOfDate);
+  const holidays = options.holidays || [];
+
+  const accrued = calculateAccruedLeaveForEmployee(employee, cycleRange, asOfDate);
+  const taken = calculateLeaveTakenForEmployee(
+    employee?.id,
+    applications,
+    cycleRange,
+    asOfDate,
+    holidays
+  );
+
+  const balances = cloneDefaultLeaveBalances();
+  SUPPORTED_LEAVE_TYPES.forEach(type => {
+    const defaults = DEFAULT_LEAVE_BALANCES[type];
+    const accruedValue = accrued[type] || 0;
+    const takenValue = taken[type] || 0;
+    const balance = roundToOneDecimal(accruedValue - takenValue);
+    balances[type] = {
+      ...normalizeLeaveBalanceEntry(employee?.leaveBalances?.[type], defaults),
+      monthlyAccrual: defaults.monthlyAccrual,
+      yearlyAllocation: defaults.yearlyAllocation,
+      accrued: roundToOneDecimal(accruedValue),
+      taken: roundToOneDecimal(takenValue),
+      balance
+    };
+  });
+
+  balances.cycleStart = cycleRange.start;
+  balances.cycleEnd = cycleRange.end;
+  balances.lastAccrualRun = asOfDate;
+
+  return { balances, accrued, taken, cycleRange };
+}
+
+async function recalculateLeaveBalancesForCycle(asOfDate = new Date()) {
   await db.read();
 
   db.data = db.data || {};
   db.data.employees = Array.isArray(db.data.employees) ? db.data.employees : [];
+  db.data.applications = Array.isArray(db.data.applications) ? db.data.applications : [];
+  db.data.holidays = Array.isArray(db.data.holidays) ? db.data.holidays : [];
 
   const employees = db.data.employees;
-  const monthStart = getMonthStart(now);
+  const applications = db.data.applications;
+  const holidays = db.data.holidays;
+  const cycleRange = getCurrentCycleRange(asOfDate);
 
-  let accruedCount = 0;
+  let updated = 0;
 
   employees.forEach(emp => {
-    const accrued = accrueEmployeeLeave(emp, monthStart);
-    if (accrued) {
-      accruedCount += 1;
+    const { balances } = buildEmployeeLeaveState(emp, applications, {
+      asOfDate,
+      cycleRange,
+      holidays
+    });
+
+    const hasChanged = JSON.stringify(emp.leaveBalances || {}) !== JSON.stringify(balances);
+    emp.leaveBalances = balances;
+    if (hasChanged) {
+      updated += 1;
     }
   });
 
-  if (accruedCount > 0) {
+  if (updated > 0) {
     await db.write();
   }
 
-  return { processed: employees.length, accrued: accruedCount };
+  return {
+    processed: employees.length,
+    updated,
+    cycleStart: cycleRange.start,
+    cycleEnd: cycleRange.end,
+    asOf: asOfDate
+  };
+}
+
+async function accrueMonthlyLeave(now = new Date()) {
+  return recalculateLeaveBalancesForCycle(now);
 }
 
 module.exports = {
-  accrueMonthlyLeave
+  accrueMonthlyLeave,
+  recalculateLeaveBalancesForCycle,
+  calculateAccruedLeaveForEmployee,
+  calculateLeaveTakenForEmployee,
+  buildEmployeeLeaveState,
+  getCurrentCycleRange,
+  getEffectiveEmploymentWindow,
+  cloneDefaultLeaveBalances,
+  DEFAULT_LEAVE_BALANCES,
+  SUPPORTED_LEAVE_TYPES,
+  roundToOneDecimal,
+  listAccrualMonths
 };
