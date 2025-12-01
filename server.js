@@ -46,7 +46,6 @@ const {
   getCurrentLeaveCycle: getCurrentLeaveCycleInfo,
   DEFAULT_ENTITLEMENTS
 } = require('./utils/leaveAccrual');
-const { migrateLeaveSystem } = require('./scripts/migrateLeaveSystem');
 
 if (process.env.NODE_ENV !== 'production' || !global.__monthlyLeaveCronInitialized) {
   require('./cron/monthlyLeaveCron');
@@ -5619,16 +5618,6 @@ init().then(async () => {
     console.error(err);
     res.status(500).json({ error: err.message || 'Server error' });
   });
-
-  (async () => {
-    try {
-      console.log('[leave-migration] Starting migration on server startup...');
-      await migrateLeaveSystem();
-      console.log('[leave-migration] Migration complete.');
-    } catch (err) {
-      console.error('[leave-migration] Migration failed:', err);
-    }
-  })();
 
   // ========== START SERVER ==========
   const PORT = process.env.PORT || 3000;
