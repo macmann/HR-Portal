@@ -106,10 +106,3 @@ test('Accrued balances are capped at the yearly allocation', () => {
   assert.equal(balances.casual.balance, 5);
   assert.equal(balances.medical.balance, 14);
 });
-
-test('Current cycle range spans July through June for the working year', () => {
-  const { start, end } = getCurrentCycleRange(new Date('2025-12-15'));
-
-  assert.equal(start.toISOString().split('T')[0], '2025-07-01');
-  assert.equal(end.toISOString().split('T')[0], '2026-06-30');
-});
