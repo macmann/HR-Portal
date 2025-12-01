@@ -70,6 +70,125 @@ body {
               linear-gradient(135deg, rgba(11, 87, 208, 0.08), rgba(103, 80, 164, 0.08));
 }
 
+.landing-shell {
+  width: min(1200px, 100%);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 20px;
+  align-items: stretch;
+}
+
+.welcome-panel {
+  position: relative;
+  overflow: hidden;
+  padding: 30px;
+  border-radius: 28px;
+  background: linear-gradient(135deg, rgba(58, 111, 248, 0.12), rgba(108, 92, 231, 0.12)),
+              radial-gradient(circle at 10% 20%, rgba(16, 185, 129, 0.18), transparent 30%),
+              #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: var(--md-sys-shadow-card);
+  display: grid;
+  gap: 20px;
+}
+
+.welcome-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 85% 25%, rgba(58, 111, 248, 0.2), transparent 35%),
+              radial-gradient(circle at 60% 80%, rgba(16, 185, 129, 0.18), transparent 40%);
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.welcome-header {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 10px;
+}
+
+.welcome-eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+  font-size: 11px;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.welcome-eyebrow .material-symbols-rounded {
+  font-size: 18px;
+  color: #2563eb;
+}
+
+.welcome-title {
+  margin: 0;
+  font-size: clamp(1.9rem, 3vw, 2.3rem);
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.welcome-copy {
+  margin: 0;
+  max-width: 620px;
+  color: #475569;
+  font-size: 1rem;
+}
+
+.welcome-badges {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.welcome-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(58, 111, 248, 0.12);
+  color: #1d4ed8;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.welcome-badge.success {
+  background: rgba(16, 185, 129, 0.12);
+  color: #0f7b32;
+}
+
+.feature-pills {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.feature-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.02);
+  border: 1px solid #e2e8f0;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.feature-pill .material-symbols-rounded {
+  color: #4f46e5;
+}
+
 .login-card {
   width: min(420px, 100%);
   background: rgba(255, 255, 255, 0.88);

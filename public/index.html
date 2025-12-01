@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Leave Management | Brillar</title>
+  <title>Brillar HR Portal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
@@ -1064,37 +1064,66 @@
 <body class="app-shell">
   <!-- Login Experience -->
   <div id="loginPage" class="login-view">
-    <div class="login-card">
-      <img src="logo.png" alt="Brillar Logo" class="brand-logo">
-      <div>
-        <h1 class="login-title">Brillar Leave Portal</h1>
-        <p class="login-subtitle">Sign in to request leave, review approvals, and keep your team informed.</p>
+    <div class="landing-shell">
+      <section class="welcome-panel">
+        <div class="welcome-header">
+          <p class="welcome-eyebrow">
+            <span class="material-symbols-rounded">workspace_premium</span>
+            People-first portal
+          </p>
+          <h1 class="welcome-title">Brillar HR Portal</h1>
+          <p class="welcome-copy">A cohesive workspace for leave, performance, recruitment, and talent experiences — all with Brillar's modern material-inspired feel.</p>
+        </div>
+        <div class="welcome-badges">
+          <span class="welcome-badge">
+            <span class="material-symbols-rounded">verified_user</span>
+            Secure single sign-on
+          </span>
+          <span class="welcome-badge success">
+            <span class="material-symbols-rounded">bolt</span>
+            AI-assisted workflows
+          </span>
+        </div>
+        <div class="feature-pills">
+          <span class="feature-pill"><span class="material-symbols-rounded">calendar_month</span>Time off & attendance</span>
+          <span class="feature-pill"><span class="material-symbols-rounded">workspace_premium</span>Performance reviews</span>
+          <span class="feature-pill"><span class="material-symbols-rounded">diversity_3</span>Talent & hiring</span>
+          <span class="feature-pill"><span class="material-symbols-rounded">insights</span>HR analytics</span>
+        </div>
+      </section>
+
+      <div class="login-card">
+        <img src="logo.png" alt="Brillar Logo" class="brand-logo">
+        <div>
+          <h1 class="login-title">Brillar HR Portal</h1>
+          <p class="login-subtitle">Sign in to manage leave, approvals, performance cycles, and talent workflows with confidence.</p>
+        </div>
+        <form id="loginForm" class="form-stack">
+          <div class="md-field">
+            <label class="md-label" for="loginEmail">Work Email</label>
+            <div class="md-input-wrapper">
+              <span class="material-symbols-rounded">mail</span>
+              <input id="loginEmail" name="email" type="email" placeholder="you@brillar.io" required class="md-input">
+            </div>
+          </div>
+          <div class="md-field">
+            <label class="md-label" for="loginPassword">Password</label>
+            <div class="md-input-wrapper">
+              <span class="material-symbols-rounded">lock</span>
+              <input id="loginPassword" name="password" type="password" placeholder="Enter your password" required class="md-input">
+            </div>
+          </div>
+          <button type="submit" class="md-button md-button--filled">
+            <span class="material-symbols-rounded">login</span>
+            Sign In
+          </button>
+          <button id="msLoginBtn" type="button" class="md-button md-button--outlined">
+            <span class="material-symbols-rounded">account_circle</span>
+            Sign in with Microsoft 365
+          </button>
+          <div id="loginError" class="form-error hidden"></div>
+        </form>
       </div>
-      <form id="loginForm" class="form-stack">
-        <div class="md-field">
-          <label class="md-label" for="loginEmail">Work Email</label>
-          <div class="md-input-wrapper">
-            <span class="material-symbols-rounded">mail</span>
-            <input id="loginEmail" name="email" type="email" placeholder="you@brillar.io" required class="md-input">
-          </div>
-        </div>
-        <div class="md-field">
-          <label class="md-label" for="loginPassword">Password</label>
-          <div class="md-input-wrapper">
-            <span class="material-symbols-rounded">lock</span>
-            <input id="loginPassword" name="password" type="password" placeholder="Enter your password" required class="md-input">
-          </div>
-        </div>
-        <button type="submit" class="md-button md-button--filled">
-          <span class="material-symbols-rounded">login</span>
-          Sign In
-        </button>
-        <button id="msLoginBtn" type="button" class="md-button md-button--outlined">
-          <span class="material-symbols-rounded">account_circle</span>
-          Sign in with Microsoft 365
-        </button>
-        <div id="loginError" class="form-error hidden"></div>
-      </form>
     </div>
   </div>
 
@@ -1105,7 +1134,7 @@
         <div class="brand-cluster">
           <img src="https://static.wixstatic.com/media/34647d_4924e46631c3463abed06f9e3147eba3~mv2.png" alt="Brillar Logo">
           <div class="brand-text">
-            <span class="brand-title">Brillar Leave Management</span>
+            <span class="brand-title">Brillar HR Portal</span>
             <span class="brand-tagline">Modern, people-first HR experiences</span>
           </div>
         </div>
