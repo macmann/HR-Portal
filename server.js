@@ -126,6 +126,7 @@ const BODY_LIMIT = process.env.BODY_LIMIT || '3mb';
 // Default admin credentials (can be overridden with env vars)
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@hrconnect.io';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+const DEFAULT_EMPLOYEE_PASSWORD = process.env.DEFAULT_EMPLOYEE_PASSWORD || 'hrconnect';
 
 const MANAGER_ROLES = new Set(['manager', 'superadmin']);
 const INACTIVE_EMPLOYEE_STATUSES = new Set([
@@ -714,6 +715,23 @@ function getEmpRole(emp) {
   const key = findEmployeeKey(emp, normalized => normalized === 'role' || normalized.includes('role'));
   const value = key ? String(emp[key] || '').trim().toLowerCase() : '';
   return value === 'manager' ? 'manager' : 'employee';
+}
+
+async function sendEmployeeCredentialsEmail(employee, password = DEFAULT_EMPLOYEE_PASSWORD) {
+  const email = getEmpEmail(employee);
+  if (!email) return false;
+  const name = employee?.name || 'there';
+  const messageLines = [
+    `Hi ${name},`,
+    '',
+    'An HR portal account has been created for you.',
+    `Username: ${email}`,
+    `Temporary password: ${password}`,
+    '',
+    'Please sign in and update your password after your first login.'
+  ];
+  await sendEmail(email, 'Your HR portal account is ready', messageLines.join('\n'));
+  return true;
 }
 
 function buildRecipientOptions(data, extras = []) {
@@ -1551,10 +1569,10 @@ function buildUserInfoOpenApiSchemas() {
 }
 
 function upsertUserForEmployee(emp) {
-  if (!emp) return false;
+  if (!emp) return { created: false, changed: false, user: null };
   normalizeEmployeeEmail(emp);
   const email = (getEmpEmail(emp) || '').trim();
-  if (!email) return false;
+  if (!email) return { created: false, changed: false, user: null };
   db.data.users = db.data.users || [];
   const normalizedEmail = email.toLowerCase();
   const existing = db.data.users.find(
@@ -1576,20 +1594,21 @@ function upsertUserForEmployee(emp) {
       changed = true;
     }
     if (!existing.password) {
-      existing.password = 'hrconnect';
+      existing.password = DEFAULT_EMPLOYEE_PASSWORD;
       changed = true;
     }
-    return changed;
+    return { created: false, changed, user: existing };
   }
 
-  db.data.users.push({
+  const user = {
     id: emp.id,
     email,
-    password: 'hrconnect',
+    password: DEFAULT_EMPLOYEE_PASSWORD,
     role,
     employeeId: emp.id
-  });
-  return true;
+  };
+  db.data.users.push(user);
+  return { created: true, changed: true, user };
 }
 
 const SESSION_TOKENS = {}; // token: userId
@@ -2019,7 +2038,8 @@ async function ensureUsersForExistingEmployees() {
   db.data.employees.forEach(emp => {
     if (normalizeEmployeeEmail(emp)) changed = true;
     if (ensureLeaveBalances(emp)) changed = true;
-    if (upsertUserForEmployee(emp)) changed = true;
+    const upsertResult = upsertUserForEmployee(emp);
+    if (upsertResult.changed) changed = true;
   });
   if (changed) {
     await db.write();
@@ -2535,10 +2555,11 @@ init().then(async () => {
       return res.status(400).json({ error: 'Employee email is required to create login credentials.' });
     }
     db.data.employees.push(employee);
-    if (upsertUserForEmployee(employee)) {
-      // When upsert adds a new user, db.data.users is already updated.
-    }
+    const upsertResult = upsertUserForEmployee(employee);
     await db.write();
+    if (upsertResult.created) {
+      await sendEmployeeCredentialsEmail(employee);
+    }
     res.status(201).json(employee);
   });
 
@@ -2615,6 +2636,7 @@ init().then(async () => {
     try {
       const rows = parse(req.body, { columns: true, skip_empty_lines: true });
       const start = Date.now();
+      const newlyCreatedEmployees = [];
       rows.forEach((row, idx) => {
         const id = start + idx;
         const nameKey = Object.keys(row).find(k => k.toLowerCase() === 'name');
@@ -2640,9 +2662,15 @@ init().then(async () => {
         ensureInternFlag(emp);
         normalizeEmployeeEmail(emp);
         db.data.employees.push(emp);
-        upsertUserForEmployee(emp);
+        const upsertResult = upsertUserForEmployee(emp);
+        if (upsertResult.created) {
+          newlyCreatedEmployees.push(emp);
+        }
       });
       await db.write();
+      for (const emp of newlyCreatedEmployees) {
+        await sendEmployeeCredentialsEmail(emp);
+      }
       res.status(201).json({ added: rows.length });
     } catch (err) {
       console.error('CSV parse failed', err);
@@ -2660,8 +2688,11 @@ init().then(async () => {
     normalizeEmployeeEmail(emp);
     ensureLeaveBalances(emp);
     ensureInternFlag(emp);
-    upsertUserForEmployee(emp);
+    const upsertResult = upsertUserForEmployee(emp);
     await db.write();
+    if (upsertResult.created) {
+      await sendEmployeeCredentialsEmail(emp);
+    }
     res.json(emp);
   });
 
