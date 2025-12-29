@@ -1599,6 +1599,8 @@ function upsertUserForEmployee(emp) {
 const SESSION_TOKENS = {}; // token: userId
 const WIDGET_JWT_SECRET = process.env.WIDGET_JWT_SECRET || process.env.JWT_SECRET || 'brillar-widget-secret';
 const WIDGET_JWT_EXPIRES_IN = Number(process.env.WIDGET_JWT_EXPIRES_IN || 300);
+const DEFAULT_CHAT_WIDGET_URL =
+  'https://qa.atenxion.ai/chat-widget?agentchainId=6900712037c0ed036821b334';
 
 function genToken() {
   return Math.random().toString(36).slice(2) + Date.now();
@@ -3826,6 +3828,58 @@ init().then(async () => {
       }
     }
   );
+
+  function normalizeChatWidgetUrl(value) {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) return '';
+    try {
+      // eslint-disable-next-line no-new
+      new URL(trimmed);
+    } catch (error) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  // ---- CHAT WIDGET SETTINGS ----
+  app.get('/settings/widget', authRequired, async (req, res) => {
+    try {
+      await db.read();
+      const stored = db.data.settings?.chatWidget;
+      const storedUrl = typeof stored?.url === 'string' ? stored.url.trim() : '';
+      res.json({
+        url: storedUrl || DEFAULT_CHAT_WIDGET_URL,
+        defaultUrl: DEFAULT_CHAT_WIDGET_URL,
+        hasCustom: Boolean(storedUrl)
+      });
+    } catch (err) {
+      console.error('Failed to load chat widget settings', err);
+      res.status(500).json({ error: 'Unable to load chat widget settings.' });
+    }
+  });
+
+  app.put('/settings/widget', authRequired, managerOnly, async (req, res) => {
+    try {
+      const incomingUrl = normalizeChatWidgetUrl(req.body?.url);
+      if (incomingUrl === null) {
+        return res.status(400).json({ error: 'Chat widget URL must be a valid URL.' });
+      }
+
+      await db.read();
+      db.data.settings = db.data.settings && typeof db.data.settings === 'object' ? db.data.settings : {};
+      db.data.settings.chatWidget = { url: incomingUrl || '' };
+      await db.write();
+
+      res.json({
+        url: incomingUrl || DEFAULT_CHAT_WIDGET_URL,
+        defaultUrl: DEFAULT_CHAT_WIDGET_URL,
+        hasCustom: Boolean(incomingUrl)
+      });
+    } catch (err) {
+      console.error('Failed to save chat widget settings', err);
+      res.status(500).json({ error: 'Unable to save chat widget settings.' });
+    }
+  });
 
   // ---- EMAIL SETTINGS ----
   app.get('/settings/email', authRequired, managerOnly, async (req, res) => {
