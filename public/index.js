@@ -799,6 +799,7 @@ function logout() {
   document.getElementById('tabRecruitment').classList.add('hidden');
   document.getElementById('tabManagerApps').classList.add('hidden');
   document.getElementById('tabLeaveReport').classList.add('hidden');
+  document.getElementById('tabLearningHub').classList.add('hidden');
   document.getElementById('tabSettings').classList.add('hidden');
   document.getElementById('tabFinance').classList.add('hidden');
   refreshTabGroupVisibility();
@@ -932,6 +933,7 @@ function showPanel(name) {
   const profileBtn = document.getElementById('tabProfile');
   const portalBtn   = document.getElementById('tabPortal');
   const performanceBtn = document.getElementById('tabPerformance');
+  const learningHubBtn = document.getElementById('tabLearningHub');
   const manageBtn   = document.getElementById('tabManage');
   const recruitmentBtn = document.getElementById('tabRecruitment');
   const managerBtn  = document.getElementById('tabManagerApps');
@@ -942,6 +944,7 @@ function showPanel(name) {
   const profilePanel = document.getElementById('profilePanel');
   const portalPanel = document.getElementById('portalPanel');
   const performancePanel = document.getElementById('performancePanel');
+  const learningHubPanel = document.getElementById('learningHubPanel');
   const managePanel = document.getElementById('managePanel');
   const recruitmentPanel = document.getElementById('recruitmentPanel');
   const managerPanel = document.getElementById('managerAppsPanel');
@@ -950,12 +953,13 @@ function showPanel(name) {
   const settingsPanel = document.getElementById('settingsPanel');
   const financePanel = document.getElementById('financePanel');
 
-  [profileBtn, portalBtn, performanceBtn, manageBtn, recruitmentBtn, managerBtn, reportBtn, locationBtn, settingsBtn, financeBtn].forEach(btn =>
+  [profileBtn, portalBtn, performanceBtn, learningHubBtn, manageBtn, recruitmentBtn, managerBtn, reportBtn, locationBtn, settingsBtn, financeBtn].forEach(btn =>
  btn && btn.classList.remove('active-tab'));
 
   if (profilePanel) profilePanel.classList.add('hidden');
   portalPanel.classList.add('hidden');
   if (performancePanel) performancePanel.classList.add('hidden');
+  if (learningHubPanel) learningHubPanel.classList.add('hidden');
   managePanel.classList.add('hidden');
   recruitmentPanel.classList.add('hidden');
   managerPanel.classList.add('hidden');
@@ -977,6 +981,11 @@ function showPanel(name) {
     performancePanel.classList.remove('hidden');
     if (performanceBtn) performanceBtn.classList.add('active-tab');
     ensurePerformanceExperience();
+  }
+  if (name === 'learningHub' && learningHubPanel) {
+    learningHubPanel.classList.remove('hidden');
+    if (learningHubBtn) learningHubBtn.classList.add('active-tab');
+    initLearningHub();
   }
   if (name === 'manage') {
     managePanel.classList.remove('hidden');
@@ -1050,6 +1059,7 @@ function toggleTabsByRole() {
   const locationTab = document.getElementById('tabLocationInsights');
   const settingsTab = document.getElementById('tabSettings');
   const financeTab = document.getElementById('tabFinance');
+  const learningHubTab = document.getElementById('tabLearningHub');
 
   const managerVisible = isManagerRole(currentUser?.role);
   const superAdminVisible = isSuperAdmin(currentUser);
@@ -1063,7 +1073,709 @@ function toggleTabsByRole() {
     financeTab.classList.toggle('hidden', !superAdminVisible);
   }
 
+  if (learningHubTab) {
+    learningHubTab.classList.remove('hidden');
+  }
+
   refreshTabGroupVisibility();
+}
+
+// ----------- LEARNING HUB -----------
+const learningHubState = {
+  courses: [],
+  modulesByCourse: new Map(),
+  lessonsByModule: new Map(),
+  playbackByLesson: new Map(),
+  progress: {
+    courses: new Map(),
+    modules: new Map(),
+    lessons: new Map()
+  },
+  selectedCourseId: null,
+  selectedModuleId: null,
+  selectedLessonId: null,
+  initialized: false,
+  loading: {
+    courses: false,
+    modules: false,
+    lessons: false,
+    playback: false
+  }
+};
+
+function learningHubFetch(path, options = {}) {
+  const headers = options.headers ? { ...options.headers } : {};
+  if (!headers.Accept) {
+    headers.Accept = 'application/json';
+  }
+  return fetch(path, {
+    ...options,
+    headers,
+    credentials: 'include'
+  });
+}
+
+function setLearningHubStatus(message = '') {
+  const statusEl = document.getElementById('learningHubStatus');
+  if (!statusEl) return;
+  if (!message) {
+    statusEl.textContent = '';
+    statusEl.classList.add('hidden');
+    return;
+  }
+  statusEl.textContent = message;
+  statusEl.classList.remove('hidden');
+}
+
+function updateLearningHubSummary() {
+  const courseCountEl = document.getElementById('learningHubCourseCount');
+  const overallProgressEl = document.getElementById('learningHubOverallProgress');
+  const updatedAtEl = document.getElementById('learningHubUpdatedAt');
+  if (courseCountEl) {
+    courseCountEl.textContent = `Courses: ${learningHubState.courses.length}`;
+  }
+  if (overallProgressEl) {
+    const progressValues = learningHubState.courses
+      .map(course => resolveCourseProgress(course.id))
+      .filter(val => Number.isFinite(val));
+    const overall = progressValues.length
+      ? Math.round(progressValues.reduce((sum, val) => sum + val, 0) / progressValues.length)
+      : 0;
+    overallProgressEl.textContent = `Overall: ${overall}%`;
+  }
+  if (updatedAtEl) {
+    updatedAtEl.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+  }
+}
+
+function normalizeProgressCollection(collection, idKeys) {
+  const map = new Map();
+  if (Array.isArray(collection)) {
+    collection.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      const idKey = idKeys.find(key => item[key]);
+      const id = idKey ? item[idKey] : null;
+      if (!id) return;
+      map.set(String(id), item);
+    });
+    return map;
+  }
+  if (collection && typeof collection === 'object') {
+    Object.entries(collection).forEach(([key, value]) => {
+      if (value && typeof value === 'object') {
+        map.set(String(key), { id: key, ...value });
+      } else {
+        map.set(String(key), { id: key, progress: value });
+      }
+    });
+  }
+  return map;
+}
+
+function normalizeLearningItems(items, idKeys) {
+  if (!Array.isArray(items)) return [];
+  return items.map((item) => {
+    if (!item || typeof item !== 'object') return null;
+    const id = idKeys.map(key => item[key]).find(val => val !== undefined && val !== null);
+    if (!id) return null;
+    return { ...item, id };
+  }).filter(Boolean);
+}
+
+function toPercent(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') {
+    if (value <= 1) return Math.round(value * 100);
+    return Math.round(value);
+  }
+  if (typeof value === 'string') {
+    const numeric = Number.parseFloat(value);
+    if (Number.isFinite(numeric)) return numeric > 1 ? Math.round(numeric) : Math.round(numeric * 100);
+  }
+  return null;
+}
+
+function extractProgress(entry) {
+  if (!entry) return null;
+  if (typeof entry === 'number' || typeof entry === 'string') {
+    return toPercent(entry);
+  }
+  const direct =
+    entry.progress ??
+    entry.completion ??
+    entry.percent ??
+    entry.percentage ??
+    entry.completionRate;
+  const directPercent = toPercent(direct);
+  if (directPercent !== null) return directPercent;
+  if (entry.completed || entry.status === 'completed') return 100;
+  if (entry.status === 'in_progress') return 50;
+  return null;
+}
+
+function resolveCourseProgress(courseId) {
+  const direct = extractProgress(learningHubState.progress.courses.get(String(courseId)));
+  if (direct !== null) return direct;
+  const modules = learningHubState.modulesByCourse.get(String(courseId)) || [];
+  const values = modules
+    .map(module => resolveModuleProgress(module.id))
+    .filter(val => Number.isFinite(val));
+  if (!values.length) return 0;
+  return Math.round(values.reduce((sum, val) => sum + val, 0) / values.length);
+}
+
+function resolveModuleProgress(moduleId) {
+  const direct = extractProgress(learningHubState.progress.modules.get(String(moduleId)));
+  if (direct !== null) return direct;
+  return calculateModuleProgressFromLessons(moduleId);
+}
+
+function resolveLessonProgress(lessonId) {
+  const direct = extractProgress(learningHubState.progress.lessons.get(String(lessonId)));
+  if (direct !== null) return direct;
+  return 0;
+}
+
+function calculateModuleProgressFromLessons(moduleId) {
+  const lessons = learningHubState.lessonsByModule.get(String(moduleId)) || [];
+  const values = lessons
+    .map(lesson => resolveLessonProgress(lesson.id))
+    .filter(val => Number.isFinite(val));
+  if (!values.length) return 0;
+  return Math.round(values.reduce((sum, val) => sum + val, 0) / values.length);
+}
+
+function calculateCourseProgressFromModules(courseId) {
+  const modules = learningHubState.modulesByCourse.get(String(courseId)) || [];
+  const values = modules
+    .map(module => resolveModuleProgress(module.id))
+    .filter(val => Number.isFinite(val));
+  if (!values.length) return 0;
+  return Math.round(values.reduce((sum, val) => sum + val, 0) / values.length);
+}
+
+function resolveLessonStatus(lessonId) {
+  const entry = learningHubState.progress.lessons.get(String(lessonId));
+  const percent = resolveLessonProgress(lessonId);
+  if (entry?.completed || entry?.status === 'completed' || percent >= 100) {
+    return 'Completed';
+  }
+  if (entry?.status === 'in_progress' || percent > 0) {
+    return 'In progress';
+  }
+  return 'Not started';
+}
+
+function buildRequirementBadge(isRequired) {
+  const badge = document.createElement('span');
+  badge.className = `learning-badge ${isRequired ? 'learning-badge--required' : 'learning-badge--optional'}`;
+  badge.textContent = isRequired ? 'Required' : 'Optional';
+  return badge;
+}
+
+function renderProgressBar(barId, textId, percent) {
+  const bar = document.getElementById(barId);
+  const text = document.getElementById(textId);
+  const safePercent = Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 100) : 0;
+  if (bar) bar.style.width = `${safePercent}%`;
+  if (text) text.textContent = `${safePercent}%`;
+}
+
+function renderCourseList() {
+  const list = document.getElementById('learningCourseList');
+  const empty = document.getElementById('learningCourseEmpty');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (!learningHubState.courses.length) {
+    if (empty) empty.classList.remove('hidden');
+    return;
+  }
+  if (empty) empty.classList.add('hidden');
+
+  learningHubState.courses.forEach(course => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'learning-list-item';
+    if (String(course.id) === String(learningHubState.selectedCourseId)) {
+      button.classList.add('learning-list-item--active');
+    }
+    button.dataset.courseId = course.id;
+
+    const title = document.createElement('div');
+    title.className = 'learning-list-title';
+    title.innerHTML = `
+      <span>${escapeHtml(course.title || course.name || 'Untitled course')}</span>
+    `;
+    title.appendChild(buildRequirementBadge(course.required ?? course.isRequired ?? course.assignmentRequired));
+
+    const meta = document.createElement('div');
+    meta.className = 'learning-list-meta';
+    const progress = resolveCourseProgress(course.id);
+    meta.textContent = `${progress}% complete`;
+
+    const status = document.createElement('div');
+    status.className = 'learning-progress-inline';
+    status.innerHTML = `
+      <div class="learning-progress-bar">
+        <div class="learning-progress-fill" style="width: ${progress}%;"></div>
+      </div>
+      <span class="learning-progress-text">${progress}%</span>
+    `;
+
+    button.append(title, meta, status);
+    list.appendChild(button);
+  });
+}
+
+function renderCourseDetails() {
+  const title = document.getElementById('learningCourseTitle');
+  const meta = document.getElementById('learningCourseMeta');
+  const course = learningHubState.courses.find(item => String(item.id) === String(learningHubState.selectedCourseId));
+  if (title) {
+    title.textContent = course
+      ? (course.title || course.name || 'Course details')
+      : 'Select a course to view modules and lessons.';
+  }
+  if (meta) {
+    meta.innerHTML = '';
+    if (course) {
+      const duration = course.duration || course.estimatedDuration || course.length;
+      const modulesCount = learningHubState.modulesByCourse.get(String(course.id))?.length ?? 0;
+      const items = [];
+      if (duration) items.push(`Duration: ${duration}`);
+      if (Number.isFinite(modulesCount)) items.push(`Modules: ${modulesCount}`);
+      if (course.category) items.push(`Category: ${course.category}`);
+      meta.textContent = items.join(' • ');
+    }
+  }
+  renderProgressBar('learningCourseProgressBar', 'learningCourseProgressText', course ? resolveCourseProgress(course.id) : 0);
+}
+
+function renderModuleList() {
+  const list = document.getElementById('learningModuleList');
+  if (!list) return;
+  list.innerHTML = '';
+  const modules = learningHubState.modulesByCourse.get(String(learningHubState.selectedCourseId)) || [];
+
+  modules.forEach(module => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'learning-list-item';
+    if (String(module.id) === String(learningHubState.selectedModuleId)) {
+      button.classList.add('learning-list-item--active');
+    }
+    button.dataset.moduleId = module.id;
+
+    const title = document.createElement('div');
+    title.className = 'learning-list-title';
+    title.innerHTML = `
+      <span>${escapeHtml(module.title || module.name || 'Module')}</span>
+    `;
+    title.appendChild(buildRequirementBadge(module.required ?? module.isRequired ?? module.assignmentRequired));
+
+    const meta = document.createElement('div');
+    meta.className = 'learning-list-meta';
+    meta.textContent = `${resolveModuleProgress(module.id)}% complete`;
+
+    const status = document.createElement('div');
+    status.className = 'learning-progress-inline';
+    status.innerHTML = `
+      <div class="learning-progress-bar">
+        <div class="learning-progress-fill" style="width: ${resolveModuleProgress(module.id)}%;"></div>
+      </div>
+      <span class="learning-progress-text">${resolveModuleProgress(module.id)}%</span>
+    `;
+
+    button.append(title, meta, status);
+    list.appendChild(button);
+  });
+}
+
+function renderLessonList() {
+  const list = document.getElementById('learningLessonList');
+  if (!list) return;
+  list.innerHTML = '';
+  const lessons = learningHubState.lessonsByModule.get(String(learningHubState.selectedModuleId)) || [];
+
+  lessons.forEach(lesson => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'learning-list-item';
+    if (String(lesson.id) === String(learningHubState.selectedLessonId)) {
+      button.classList.add('learning-list-item--active');
+    }
+    button.dataset.lessonId = lesson.id;
+
+    const title = document.createElement('div');
+    title.className = 'learning-list-title';
+    title.innerHTML = `
+      <span>${escapeHtml(lesson.title || lesson.name || 'Lesson')}</span>
+    `;
+    title.appendChild(buildRequirementBadge(lesson.required ?? lesson.isRequired ?? lesson.assignmentRequired));
+
+    const meta = document.createElement('div');
+    meta.className = 'learning-list-meta';
+    meta.textContent = `${resolveLessonStatus(lesson.id)} • ${resolveLessonProgress(lesson.id)}%`;
+
+    const status = document.createElement('div');
+    status.className = 'learning-progress-inline';
+    status.innerHTML = `
+      <div class="learning-progress-bar">
+        <div class="learning-progress-fill" style="width: ${resolveLessonProgress(lesson.id)}%;"></div>
+      </div>
+      <span class="learning-progress-text">${resolveLessonProgress(lesson.id)}%</span>
+    `;
+
+    button.append(title, meta, status);
+    list.appendChild(button);
+  });
+}
+
+function renderLessonPlayer() {
+  const lesson = findCurrentLesson();
+  const title = document.getElementById('learningLessonTitle');
+  if (title) {
+    title.textContent = lesson
+      ? (lesson.title || lesson.name || 'Lesson player')
+      : 'Select a lesson to start playback.';
+  }
+
+  renderProgressBar('learningLessonProgressBar', 'learningLessonProgressText', lesson ? resolveLessonProgress(lesson.id) : 0);
+  renderProgressBar('learningModuleProgressBar', 'learningModuleProgressText', learningHubState.selectedModuleId ? resolveModuleProgress(learningHubState.selectedModuleId) : 0);
+
+  const playback = lesson ? learningHubState.playbackByLesson.get(String(lesson.id)) : null;
+  const video = document.getElementById('learningVideo');
+  const placeholder = document.getElementById('learningVideoPlaceholder');
+  if (video && placeholder) {
+    if (playback?.videoUrl || playback?.video?.url) {
+      video.src = playback.videoUrl || playback.video?.url;
+      video.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+    } else {
+      video.removeAttribute('src');
+      video.classList.add('hidden');
+      placeholder.classList.remove('hidden');
+    }
+  }
+
+  const readingList = document.getElementById('learningReadingList');
+  if (readingList) {
+    readingList.innerHTML = '';
+    const materials = playback?.readingMaterials || playback?.documents || [];
+    if (!materials.length) {
+      const item = document.createElement('div');
+      item.className = 'text-muted';
+      item.textContent = 'No reading materials for this lesson.';
+      readingList.appendChild(item);
+    } else {
+      materials.forEach(material => {
+        const link = document.createElement(material.url ? 'a' : 'div');
+        link.className = 'learning-reading-item';
+        if (material.url) {
+          link.href = material.url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+        }
+        link.innerHTML = `<span class="material-symbols-rounded">description</span>${escapeHtml(material.title || material.name || material.label || 'Resource')}`;
+        readingList.appendChild(link);
+      });
+    }
+  }
+
+  const markComplete = document.getElementById('learningMarkComplete');
+  if (markComplete) {
+    markComplete.disabled = !lesson;
+  }
+}
+
+function findCurrentLesson() {
+  if (!learningHubState.selectedLessonId) return null;
+  const lessons = learningHubState.lessonsByModule.get(String(learningHubState.selectedModuleId)) || [];
+  return lessons.find(item => String(item.id) === String(learningHubState.selectedLessonId)) || null;
+}
+
+function updateLearningHubUI() {
+  renderCourseList();
+  renderCourseDetails();
+  renderModuleList();
+  renderLessonList();
+  renderLessonPlayer();
+  updateLearningHubSummary();
+}
+
+async function loadLearningHubProgress() {
+  try {
+    const res = await learningHubFetch('/api/learning-hub/progress');
+    if (res.status === 401 || res.status === 403) {
+      setLearningHubStatus('Your session has expired. Please sign in again to access the Learning Hub.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    learningHubState.progress.courses = normalizeProgressCollection(data.courses, ['courseId', 'id']);
+    learningHubState.progress.modules = normalizeProgressCollection(data.modules, ['moduleId', 'id']);
+    learningHubState.progress.lessons = normalizeProgressCollection(data.lessons, ['lessonId', 'id']);
+    setLearningHubStatus('');
+  } catch (error) {
+    console.error('Failed to load learning hub progress', error);
+    setLearningHubStatus('Unable to load progress right now. Please try again later.');
+  }
+}
+
+async function loadLearningHubCourses() {
+  if (learningHubState.loading.courses) return;
+  learningHubState.loading.courses = true;
+  try {
+    const filter = document.getElementById('learningCourseFilter')?.value || 'assigned';
+    const query = new URLSearchParams({ filter });
+    const res = await learningHubFetch(`/api/learning-hub/courses?${query.toString()}`);
+    if (res.status === 401 || res.status === 403) {
+      setLearningHubStatus('Access denied for learning courses. Please reauthenticate.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    const rawCourses = Array.isArray(data.courses) ? data.courses : (Array.isArray(data) ? data : []);
+    learningHubState.courses = normalizeLearningItems(rawCourses, ['id', 'courseId', '_id']);
+    setLearningHubStatus('');
+    if (!learningHubState.courses.length) {
+      learningHubState.selectedCourseId = null;
+      learningHubState.selectedModuleId = null;
+      learningHubState.selectedLessonId = null;
+      updateLearningHubUI();
+      return;
+    }
+    if (!learningHubState.selectedCourseId || !learningHubState.courses.some(course => String(course.id) === String(learningHubState.selectedCourseId))) {
+      learningHubState.selectedCourseId = learningHubState.courses[0].id;
+    }
+    await loadCourseModules(learningHubState.selectedCourseId);
+    updateLearningHubUI();
+  } catch (error) {
+    console.error('Failed to load learning hub courses', error);
+    setLearningHubStatus('Unable to load courses right now. Please try again later.');
+  } finally {
+    learningHubState.loading.courses = false;
+  }
+}
+
+async function loadCourseModules(courseId) {
+  if (!courseId || learningHubState.loading.modules) return;
+  learningHubState.loading.modules = true;
+  try {
+    const res = await learningHubFetch(`/api/learning-hub/courses/${courseId}/modules`);
+    if (res.status === 401 || res.status === 403) {
+      setLearningHubStatus('Access denied for course modules. Please reauthenticate.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    const rawModules = Array.isArray(data.modules) ? data.modules : (Array.isArray(data) ? data : []);
+    const modules = normalizeLearningItems(rawModules, ['id', 'moduleId', '_id']);
+    learningHubState.modulesByCourse.set(String(courseId), modules);
+    learningHubState.selectedModuleId = modules[0]?.id || null;
+    if (learningHubState.selectedModuleId) {
+      await loadModuleLessons(learningHubState.selectedModuleId);
+    }
+  } catch (error) {
+    console.error('Failed to load learning hub modules', error);
+    setLearningHubStatus('Unable to load modules right now. Please try again later.');
+  } finally {
+    learningHubState.loading.modules = false;
+  }
+}
+
+async function loadModuleLessons(moduleId) {
+  if (!moduleId || learningHubState.loading.lessons) return;
+  learningHubState.loading.lessons = true;
+  try {
+    const res = await learningHubFetch(`/api/learning-hub/modules/${moduleId}/lessons`);
+    if (res.status === 401 || res.status === 403) {
+      setLearningHubStatus('Access denied for lessons. Please reauthenticate.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    const rawLessons = Array.isArray(data.lessons) ? data.lessons : (Array.isArray(data) ? data : []);
+    const lessons = normalizeLearningItems(rawLessons, ['id', 'lessonId', '_id']);
+    learningHubState.lessonsByModule.set(String(moduleId), lessons);
+    learningHubState.selectedLessonId = lessons[0]?.id || null;
+    if (learningHubState.selectedLessonId) {
+      await loadLessonPlayback(learningHubState.selectedLessonId);
+    }
+  } catch (error) {
+    console.error('Failed to load learning hub lessons', error);
+    setLearningHubStatus('Unable to load lessons right now. Please try again later.');
+  } finally {
+    learningHubState.loading.lessons = false;
+  }
+}
+
+async function loadLessonPlayback(lessonId) {
+  if (!lessonId || learningHubState.loading.playback) return;
+  learningHubState.loading.playback = true;
+  try {
+    const res = await learningHubFetch(`/api/learning-hub/lessons/${lessonId}/playback`);
+    if (res.status === 401 || res.status === 403) {
+      setLearningHubStatus('Access denied for lesson playback. Please reauthenticate.');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    learningHubState.playbackByLesson.set(String(lessonId), data);
+  } catch (error) {
+    console.error('Failed to load learning hub playback', error);
+    setLearningHubStatus('Unable to load lesson playback right now. Please try again later.');
+  } finally {
+    learningHubState.loading.playback = false;
+  }
+}
+
+function updateProgressMapForLesson(lessonId, progressValue = 100) {
+  learningHubState.progress.lessons.set(String(lessonId), { id: lessonId, progress: progressValue, status: 'completed' });
+  const moduleId = learningHubState.selectedModuleId;
+  const courseId = learningHubState.selectedCourseId;
+  if (moduleId) {
+    const moduleProgress = calculateModuleProgressFromLessons(moduleId);
+    learningHubState.progress.modules.set(String(moduleId), { id: moduleId, progress: moduleProgress });
+  }
+  if (courseId) {
+    const courseProgress = calculateCourseProgressFromModules(courseId);
+    learningHubState.progress.courses.set(String(courseId), { id: courseId, progress: courseProgress });
+  }
+}
+
+async function sendProgressUpdate(lessonId) {
+  if (!lessonId) return;
+  try {
+    await learningHubFetch('/api/learning-hub/progress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lessonId,
+        status: 'completed',
+        progress: 100
+      })
+    });
+  } catch (error) {
+    console.warn('Progress update failed', error);
+  }
+}
+
+async function markLessonComplete(lessonId) {
+  if (!lessonId) return;
+  updateProgressMapForLesson(lessonId, 100);
+  updateLearningHubUI();
+  await sendProgressUpdate(lessonId);
+}
+
+async function selectCourse(courseId) {
+  if (!courseId) return;
+  learningHubState.selectedCourseId = courseId;
+  const modules = learningHubState.modulesByCourse.get(String(courseId));
+  if (!modules) {
+    await loadCourseModules(courseId);
+  } else {
+    learningHubState.selectedModuleId = modules[0]?.id || null;
+    if (learningHubState.selectedModuleId) {
+      await selectModule(learningHubState.selectedModuleId);
+    }
+  }
+  updateLearningHubUI();
+}
+
+async function selectModule(moduleId) {
+  if (!moduleId) return;
+  learningHubState.selectedModuleId = moduleId;
+  const lessons = learningHubState.lessonsByModule.get(String(moduleId));
+  if (!lessons) {
+    await loadModuleLessons(moduleId);
+  } else {
+    learningHubState.selectedLessonId = lessons[0]?.id || null;
+    if (learningHubState.selectedLessonId) {
+      await selectLesson(learningHubState.selectedLessonId);
+    }
+  }
+  updateLearningHubUI();
+}
+
+async function selectLesson(lessonId) {
+  if (!lessonId) return;
+  learningHubState.selectedLessonId = lessonId;
+  if (!learningHubState.playbackByLesson.get(String(lessonId))) {
+    await loadLessonPlayback(lessonId);
+  }
+  updateLearningHubUI();
+}
+
+function getOrderedLessons() {
+  return learningHubState.lessonsByModule.get(String(learningHubState.selectedModuleId)) || [];
+}
+
+function navigateLesson(direction) {
+  const lessons = getOrderedLessons();
+  const index = lessons.findIndex(item => String(item.id) === String(learningHubState.selectedLessonId));
+  if (index === -1) return;
+  const nextIndex = direction === 'next' ? index + 1 : index - 1;
+  if (nextIndex < 0 || nextIndex >= lessons.length) return;
+  selectLesson(lessons[nextIndex].id);
+}
+
+function initLearningHub() {
+  if (learningHubState.initialized) return;
+  learningHubState.initialized = true;
+
+  const courseList = document.getElementById('learningCourseList');
+  const moduleList = document.getElementById('learningModuleList');
+  const lessonList = document.getElementById('learningLessonList');
+  const filter = document.getElementById('learningCourseFilter');
+  const prevBtn = document.getElementById('learningPrevLesson');
+  const nextBtn = document.getElementById('learningNextLesson');
+  const markBtn = document.getElementById('learningMarkComplete');
+  const video = document.getElementById('learningVideo');
+
+  if (filter) {
+    filter.addEventListener('change', () => {
+      learningHubState.selectedCourseId = null;
+      learningHubState.selectedModuleId = null;
+      learningHubState.selectedLessonId = null;
+      loadLearningHubCourses();
+    });
+  }
+
+  if (courseList) {
+    courseList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-course-id]');
+      if (!button) return;
+      selectCourse(button.dataset.courseId);
+    });
+  }
+
+  if (moduleList) {
+    moduleList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-module-id]');
+      if (!button) return;
+      selectModule(button.dataset.moduleId);
+    });
+  }
+
+  if (lessonList) {
+    lessonList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-lesson-id]');
+      if (!button) return;
+      selectLesson(button.dataset.lessonId);
+    });
+  }
+
+  if (prevBtn) {
+    prevBtn.addEventListener('click', () => navigateLesson('prev'));
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', () => navigateLesson('next'));
+  }
+  if (markBtn) {
+    markBtn.addEventListener('click', () => markLessonComplete(learningHubState.selectedLessonId));
+  }
+  if (video) {
+    video.addEventListener('ended', () => markLessonComplete(learningHubState.selectedLessonId));
+  }
+
+  Promise.all([loadLearningHubProgress(), loadLearningHubCourses()]).then(updateLearningHubUI);
 }
 
 // ----------- PERFORMANCE REVIEW -----------
@@ -5897,6 +6609,8 @@ async function init() {
   document.getElementById('tabPortal').onclick = () => showPanel('portal');
   const performanceTab = document.getElementById('tabPerformance');
   if (performanceTab) performanceTab.onclick = () => showPanel('performance');
+  const learningHubTab = document.getElementById('tabLearningHub');
+  if (learningHubTab) learningHubTab.onclick = () => showPanel('learningHub');
   document.getElementById('tabManage').onclick = () => showPanel('manage');
   const recruitmentTab = document.getElementById('tabRecruitment');
   if (recruitmentTab) recruitmentTab.onclick = () => showPanel('recruitment');

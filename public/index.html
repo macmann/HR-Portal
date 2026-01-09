@@ -1391,6 +1391,20 @@
             </button>
           </div>
         </div>
+
+        <div class="tab-group" data-tab-group>
+          <button type="button" class="tab-group-toggle" data-tab-group-toggle aria-expanded="false">
+            <span class="material-symbols-rounded">school</span>
+            <span class="tab-group-label">Learning Hub</span>
+            <span class="material-symbols-rounded tab-group-caret">expand_more</span>
+          </button>
+          <div class="tab-group-menu" data-tab-group-menu>
+            <button id="tabLearningHub" class="tab-button">
+              <span class="material-symbols-rounded">auto_stories</span>
+              <span>My Learning</span>
+            </button>
+          </div>
+        </div>
       </div>
     </nav>
 
@@ -1970,6 +1984,152 @@
             Previous Leave Applications
           </div>
           <div id="prevLeaves"></div>
+        </div>
+      </section>
+
+      <!-- Learning Hub Panel -->
+      <section id="learningHubPanel" class="panel hidden">
+        <div class="panel-header">
+          <h2 class="panel-title">
+            <span class="material-symbols-rounded">school</span>
+            Learning Hub
+          </h2>
+          <p class="panel-subtitle">Track assigned courses, dive into modules, and keep lesson progress moving.</p>
+        </div>
+
+        <div id="learningHubStatus" class="learning-hub-status hidden"></div>
+
+        <div class="learning-hub-summary">
+          <div class="md-chip">
+            <span class="material-symbols-rounded">library_books</span>
+            <span id="learningHubCourseCount">Courses: 0</span>
+          </div>
+          <div class="md-chip">
+            <span class="material-symbols-rounded">percent</span>
+            <span id="learningHubOverallProgress">Overall: 0%</span>
+          </div>
+          <div class="md-chip">
+            <span class="material-symbols-rounded">schedule</span>
+            <span id="learningHubUpdatedAt">Updated: --</span>
+          </div>
+        </div>
+
+        <div class="learning-hub-grid">
+          <div class="learning-hub-column">
+            <div class="md-card learning-hub-card">
+              <div class="learning-hub-card-header">
+                <div>
+                  <p class="card-title">
+                    <span class="material-symbols-rounded">assignment</span>
+                    Assigned Courses
+                  </p>
+                  <p class="card-subtitle">Focus on what is required or explore optional learning paths.</p>
+                </div>
+                <label class="md-field md-field--inline">
+                  <span class="md-label">Filter</span>
+                  <select id="learningCourseFilter" class="md-select">
+                    <option value="assigned" selected>Assigned</option>
+                    <option value="available">Available</option>
+                  </select>
+                </label>
+              </div>
+              <div id="learningCourseList" class="learning-list"></div>
+              <div id="learningCourseEmpty" class="empty-state hidden">
+                <p>No courses found for this filter.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="learning-hub-column">
+            <div class="md-card learning-hub-card">
+              <div class="learning-hub-card-header">
+                <div>
+                  <p class="card-title">
+                    <span class="material-symbols-rounded">menu_book</span>
+                    Course Details
+                  </p>
+                  <p id="learningCourseTitle" class="card-subtitle">Select a course to view modules and lessons.</p>
+                </div>
+                <div class="learning-progress-inline">
+                  <span class="learning-progress-label">Course Progress</span>
+                  <div class="learning-progress-bar">
+                    <div id="learningCourseProgressBar" class="learning-progress-fill" style="width: 0%;"></div>
+                  </div>
+                  <span id="learningCourseProgressText" class="learning-progress-text">0%</span>
+                </div>
+              </div>
+              <div class="learning-course-meta" id="learningCourseMeta"></div>
+              <div class="learning-detail-split">
+                <div class="learning-detail-panel">
+                  <h3 class="learning-detail-title">Modules</h3>
+                  <div id="learningModuleList" class="learning-list"></div>
+                </div>
+                <div class="learning-detail-panel">
+                  <h3 class="learning-detail-title">Lessons</h3>
+                  <div id="learningLessonList" class="learning-list"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="learning-hub-column">
+            <div class="md-card learning-hub-card">
+              <div class="learning-hub-card-header">
+                <div>
+                  <p class="card-title">
+                    <span class="material-symbols-rounded">play_circle</span>
+                    Lesson Player
+                  </p>
+                  <p id="learningLessonTitle" class="card-subtitle">Select a lesson to start playback.</p>
+                </div>
+                <div class="learning-progress-inline">
+                  <span class="learning-progress-label">Lesson Progress</span>
+                  <div class="learning-progress-bar">
+                    <div id="learningLessonProgressBar" class="learning-progress-fill" style="width: 0%;"></div>
+                  </div>
+                  <span id="learningLessonProgressText" class="learning-progress-text">0%</span>
+                </div>
+              </div>
+              <div class="learning-player">
+                <div class="learning-player-video">
+                  <video id="learningVideo" controls playsinline class="learning-video hidden"></video>
+                  <div id="learningVideoPlaceholder" class="learning-video-placeholder">
+                    <span class="material-symbols-rounded">videocam</span>
+                    <p>Select a video lesson to begin.</p>
+                  </div>
+                </div>
+                <div class="learning-player-body">
+                  <div class="learning-player-section">
+                    <h4>Reading Materials</h4>
+                    <div id="learningReadingList" class="learning-reading-list"></div>
+                  </div>
+                  <div class="learning-player-section">
+                    <h4>Module Progress</h4>
+                    <div class="learning-progress-inline">
+                      <div class="learning-progress-bar">
+                        <div id="learningModuleProgressBar" class="learning-progress-fill" style="width: 0%;"></div>
+                      </div>
+                      <span id="learningModuleProgressText" class="learning-progress-text">0%</span>
+                    </div>
+                  </div>
+                  <div class="learning-player-actions">
+                    <button id="learningPrevLesson" type="button" class="md-button md-button--outlined">
+                      <span class="material-symbols-rounded">skip_previous</span>
+                      Previous
+                    </button>
+                    <button id="learningMarkComplete" type="button" class="md-button md-button--filled">
+                      <span class="material-symbols-rounded">check_circle</span>
+                      Mark Complete
+                    </button>
+                    <button id="learningNextLesson" type="button" class="md-button md-button--outlined">
+                      <span class="material-symbols-rounded">skip_next</span>
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

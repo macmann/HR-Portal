@@ -1024,6 +1024,257 @@
   display: block;
 }
 
+.learning-hub-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.md-field--inline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.learning-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.learning-hub-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.learning-hub-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.learning-hub-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.learning-hub-status {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.1);
+  color: #b91c1c;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.learning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.learning-list-item {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  text-align: left;
+  width: 100%;
+}
+
+.learning-list-item:hover {
+  border-color: #c7d2fe;
+  box-shadow: 0 10px 18px rgba(79, 70, 229, 0.08);
+}
+
+.learning-list-item--active {
+  border-color: #4f46e5;
+  background: #eef2ff;
+}
+
+.learning-list-title {
+  font-weight: 600;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.learning-list-meta {
+  font-size: 13px;
+  color: #64748b;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.learning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: rgba(79, 70, 229, 0.12);
+  color: #4338ca;
+}
+
+.learning-badge--optional {
+  background: rgba(16, 185, 129, 0.12);
+  color: #0f766e;
+}
+
+.learning-badge--required {
+  background: rgba(249, 115, 22, 0.12);
+  color: #c2410c;
+}
+
+.learning-progress-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.learning-progress-label {
+  font-weight: 600;
+}
+
+.learning-progress-bar {
+  flex: 1;
+  min-width: 120px;
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.learning-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4f46e5, #22c55e);
+  transition: width 0.3s ease;
+}
+
+.learning-progress-text {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.learning-detail-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.learning-detail-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.learning-detail-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.learning-course-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.learning-player {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.learning-player-video {
+  border-radius: 14px;
+  background: #0f172a;
+  color: white;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.learning-video {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.learning-video-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  color: rgba(248, 250, 252, 0.8);
+}
+
+.learning-player-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.learning-player-section h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.learning-reading-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.learning-reading-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.learning-player-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .recruitment-pipeline-grid {
   display: flex;
   flex-wrap: wrap;
