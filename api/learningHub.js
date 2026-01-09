@@ -38,9 +38,14 @@ const HR_LEARNING_ROLES = new Set([
 ]);
 
 const MANAGER_ROLES = new Set(['manager', 'superadmin']);
+const REPORT_MANAGER_KEYWORDS = ['appraiser', 'manager', 'supervisor', 'reporting'];
 
 function normalizeRole(role) {
   return typeof role === 'string' ? role.trim().toLowerCase() : '';
+}
+
+function normalizeString(value) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function getUserRoles(user) {
@@ -62,6 +67,57 @@ function requireAuthenticatedUser(req, res, next) {
     return res.status(401).json({ error: 'authentication_required' });
   }
   return next();
+}
+
+function findValueByKeywords(source, keywords = []) {
+  if (!source || typeof source !== 'object') return '';
+  const normalizedKeywords = keywords.map(keyword => normalizeString(keyword).toLowerCase());
+  return Object.entries(source).reduce((match, [key, value]) => {
+    if (match) return match;
+    const normalizedKey = normalizeString(key).toLowerCase();
+    if (!normalizedKey) return match;
+    if (normalizedKeywords.some(keyword => normalizedKey.includes(keyword))) {
+      if (value !== undefined && value !== null && value !== '') {
+        return typeof value === 'string' ? value : String(value);
+      }
+    }
+    return match;
+  }, '');
+}
+
+function normalizeIdentifier(value) {
+  return normalizeString(value).toLowerCase();
+}
+
+function parseManagerCandidates(rawValue) {
+  if (!rawValue) return [];
+  return rawValue
+    .split(/[\\/,&]+/)
+    .map(entry => normalizeIdentifier(entry))
+    .filter(Boolean);
+}
+
+function getEmployeeManagerValue(employee) {
+  return findValueByKeywords(employee, REPORT_MANAGER_KEYWORDS);
+}
+
+function getEmployeeEmail(employee) {
+  return findValueByKeywords(employee, ['email']);
+}
+
+function getEmployeeRole(employee) {
+  const roleKey = Object.keys(employee || {}).find(key =>
+    normalizeString(key).toLowerCase().includes('role')
+  );
+  return roleKey ? normalizeString(employee[roleKey]) : '';
+}
+
+function employeeReportsTo(employee, managerIdentifiers) {
+  if (!managerIdentifiers || !managerIdentifiers.size) return false;
+  const managerValue = getEmployeeManagerValue(employee);
+  if (!managerValue) return false;
+  const candidates = parseManagerCandidates(managerValue);
+  return candidates.some(candidate => managerIdentifiers.has(candidate));
 }
 
 function requireLearningHubWriteAccess(req, res, next) {
@@ -88,6 +144,63 @@ function requireProgressReadAccess(req, res, next) {
 
 function hasProgressOverrideAccess(user) {
   return hasAnyRole(user, HR_LEARNING_ROLES) || hasAnyRole(user, MANAGER_ROLES);
+}
+
+async function resolveReportEmployeeScope(database, user) {
+  if (hasAnyRole(user, HR_LEARNING_ROLES)) {
+    const employees = await database.collection('employees').find().toArray();
+    return { employeeIds: null, employees };
+  }
+
+  if (!hasAnyRole(user, MANAGER_ROLES)) {
+    return { employeeIds: new Set(), employees: [] };
+  }
+
+  const employees = await database.collection('employees').find().toArray();
+  const managerId = user?.employeeId ? String(user.employeeId) : '';
+  const managerRecord = managerId
+    ? employees.find(emp => String(emp?.id) === managerId)
+    : null;
+
+  const managerIdentifiers = new Set();
+  if (managerRecord?.name) {
+    managerIdentifiers.add(normalizeIdentifier(managerRecord.name));
+  }
+  if (managerRecord?.id !== undefined && managerRecord?.id !== null) {
+    managerIdentifiers.add(normalizeIdentifier(String(managerRecord.id)));
+  }
+  if (user?.email) {
+    managerIdentifiers.add(normalizeIdentifier(user.email));
+  }
+  const managerEmail = managerRecord ? getEmployeeEmail(managerRecord) : '';
+  if (managerEmail) {
+    managerIdentifiers.add(normalizeIdentifier(managerEmail));
+  }
+
+  const team = employees.filter(employee => employeeReportsTo(employee, managerIdentifiers));
+  const employeeIds = new Set(team.map(employee => String(employee.id)));
+  return { employeeIds, employees: team };
+}
+
+function buildProgressKey(employeeId, courseId) {
+  return `${String(employeeId)}:${String(courseId)}`;
+}
+
+function selectUniqueAssignments(assignments = []) {
+  const assignmentsByKey = new Map();
+  assignments.forEach(assignment => {
+    if (!assignment?.employeeId || !assignment?.courseId) return;
+    const key = buildProgressKey(assignment.employeeId, assignment.courseId);
+    const existing = assignmentsByKey.get(key);
+    if (!existing) {
+      assignmentsByKey.set(key, assignment);
+      return;
+    }
+    if (existing.assignmentType !== 'employee' && assignment.assignmentType === 'employee') {
+      assignmentsByKey.set(key, assignment);
+    }
+  });
+  return Array.from(assignmentsByKey.values());
 }
 
 // Access policy:
@@ -793,6 +906,230 @@ router.post('/progress', async (req, res) => {
     return res.json({ progress });
   } catch (error) {
     console.error('Failed to record progress', error);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+router.get('/reports/completion-by-role', requireProgressReadAccess, async (req, res) => {
+  try {
+    const database = getDatabase();
+    const { employeeIds } = await resolveReportEmployeeScope(database, req.user);
+    const assignmentQuery = {
+      assignmentType: 'role_auto',
+      employeeId: { $ne: null }
+    };
+    if (employeeIds) {
+      assignmentQuery.employeeId = { $in: Array.from(employeeIds) };
+    }
+
+    const [assignments, progress] = await Promise.all([
+      database.collection('learningCourseAssignments').find(assignmentQuery).toArray(),
+      database.collection('learningProgress').find({ progressType: 'course' }).toArray()
+    ]);
+
+    const progressByKey = new Map();
+    progress.forEach(entry => {
+      if (!entry?.employeeId || !entry?.courseId) return;
+      progressByKey.set(buildProgressKey(entry.employeeId, entry.courseId), entry);
+    });
+
+    const roleTotals = new Map();
+    assignments.forEach(assignment => {
+      const role = normalizeString(assignment?.role).toLowerCase();
+      if (!role) return;
+      const key = buildProgressKey(assignment.employeeId, assignment.courseId);
+      const progressEntry = progressByKey.get(key);
+      const status = progressEntry?.status || 'not_started';
+      const current = roleTotals.get(role) || {
+        role,
+        totalAssignments: 0,
+        completed: 0,
+        inProgress: 0,
+        notStarted: 0
+      };
+      current.totalAssignments += 1;
+      if (status === 'completed') {
+        current.completed += 1;
+      } else if (status === 'in_progress') {
+        current.inProgress += 1;
+      } else {
+        current.notStarted += 1;
+      }
+      roleTotals.set(role, current);
+    });
+
+    const roles = Array.from(roleTotals.values()).map(entry => {
+      const completionRate = entry.totalAssignments
+        ? Math.round((entry.completed / entry.totalAssignments) * 10000) / 100
+        : 0;
+      return { ...entry, completionRate };
+    });
+
+    return res.json({ roles });
+  } catch (error) {
+    console.error('Failed to build role completion report', error);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+router.get('/reports/overdue-mandatory', requireProgressReadAccess, async (req, res) => {
+  try {
+    const database = getDatabase();
+    const { employeeIds } = await resolveReportEmployeeScope(database, req.user);
+    const assignmentQuery = {
+      required: true,
+      dueDate: { $ne: null }
+    };
+    if (employeeIds) {
+      assignmentQuery.employeeId = { $in: Array.from(employeeIds) };
+    } else {
+      assignmentQuery.employeeId = { $ne: null };
+    }
+
+    const [assignments, progress, courses] = await Promise.all([
+      database.collection('learningCourseAssignments').find(assignmentQuery).toArray(),
+      database.collection('learningProgress').find({ progressType: 'course' }).toArray(),
+      database.collection('learningCourses').find().toArray()
+    ]);
+
+    const progressByKey = new Map();
+    progress.forEach(entry => {
+      if (!entry?.employeeId || !entry?.courseId) return;
+      progressByKey.set(buildProgressKey(entry.employeeId, entry.courseId), entry);
+    });
+
+    const courseById = new Map(
+      courses.map(course => [String(course._id), course])
+    );
+
+    const now = new Date();
+    const overdueAssignments = selectUniqueAssignments(assignments).filter(assignment => {
+      if (!assignment?.dueDate) return false;
+      const dueDate = assignment.dueDate instanceof Date
+        ? assignment.dueDate
+        : new Date(assignment.dueDate);
+      if (Number.isNaN(dueDate.getTime())) return false;
+      if (dueDate >= now) return false;
+      const key = buildProgressKey(assignment.employeeId, assignment.courseId);
+      const status = progressByKey.get(key)?.status || 'not_started';
+      return status !== 'completed';
+    });
+
+    const overdueByCourse = new Map();
+    const overdue = overdueAssignments.map(assignment => {
+      const key = buildProgressKey(assignment.employeeId, assignment.courseId);
+      const course = courseById.get(String(assignment.courseId)) || null;
+      const status = progressByKey.get(key)?.status || 'not_started';
+      const entry = {
+        employeeId: assignment.employeeId,
+        courseId: assignment.courseId,
+        courseTitle: course?.title || null,
+        dueDate: assignment.dueDate,
+        status
+      };
+      const summary = overdueByCourse.get(assignment.courseId) || {
+        courseId: assignment.courseId,
+        courseTitle: course?.title || null,
+        overdueCount: 0
+      };
+      summary.overdueCount += 1;
+      overdueByCourse.set(assignment.courseId, summary);
+      return entry;
+    });
+
+    return res.json({
+      overdueCount: overdue.length,
+      byCourse: Array.from(overdueByCourse.values()),
+      overdue
+    });
+  } catch (error) {
+    console.error('Failed to build overdue mandatory report', error);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+router.get('/reports/team-progress', requireProgressReadAccess, async (req, res) => {
+  try {
+    const database = getDatabase();
+    const { employeeIds, employees } = await resolveReportEmployeeScope(database, req.user);
+    const assignmentQuery = {};
+    if (employeeIds) {
+      assignmentQuery.employeeId = { $in: Array.from(employeeIds) };
+    } else {
+      assignmentQuery.employeeId = { $ne: null };
+    }
+
+    const [assignments, progress, courses] = await Promise.all([
+      database.collection('learningCourseAssignments').find(assignmentQuery).toArray(),
+      database.collection('learningProgress').find({ progressType: 'course' }).toArray(),
+      database.collection('learningCourses').find().toArray()
+    ]);
+
+    const progressByKey = new Map();
+    progress.forEach(entry => {
+      if (!entry?.employeeId || !entry?.courseId) return;
+      progressByKey.set(buildProgressKey(entry.employeeId, entry.courseId), entry);
+    });
+
+    const courseById = new Map(
+      courses.map(course => [String(course._id), course])
+    );
+
+    const uniqueAssignments = selectUniqueAssignments(assignments);
+    const summaries = new Map();
+
+    uniqueAssignments.forEach(assignment => {
+      const employeeId = String(assignment.employeeId);
+      if (employeeIds && !employeeIds.has(employeeId)) return;
+      const key = buildProgressKey(employeeId, assignment.courseId);
+      const status = progressByKey.get(key)?.status || 'not_started';
+      const summary = summaries.get(employeeId) || {
+        employeeId,
+        employeeName: null,
+        role: null,
+        totalAssignments: 0,
+        completed: 0,
+        inProgress: 0,
+        notStarted: 0,
+        courses: []
+      };
+      summary.totalAssignments += 1;
+      if (status === 'completed') {
+        summary.completed += 1;
+      } else if (status === 'in_progress') {
+        summary.inProgress += 1;
+      } else {
+        summary.notStarted += 1;
+      }
+      const course = courseById.get(String(assignment.courseId)) || null;
+      summary.courses.push({
+        courseId: assignment.courseId,
+        courseTitle: course?.title || null,
+        status
+      });
+      summaries.set(employeeId, summary);
+    });
+
+    if (employees && employees.length) {
+      employees.forEach(employee => {
+        const employeeId = String(employee.id);
+        const summary = summaries.get(employeeId);
+        if (!summary) return;
+        summary.employeeName = employee?.name || null;
+        summary.role = getEmployeeRole(employee) || null;
+      });
+    }
+
+    const team = Array.from(summaries.values()).map(entry => {
+      const completionRate = entry.totalAssignments
+        ? Math.round((entry.completed / entry.totalAssignments) * 10000) / 100
+        : 0;
+      return { ...entry, completionRate };
+    });
+
+    return res.json({ team });
+  } catch (error) {
+    console.error('Failed to build team progress report', error);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
