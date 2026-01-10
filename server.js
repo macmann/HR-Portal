@@ -43,7 +43,7 @@ const publicCareersRoutes = require('./api/publicCareers');
 const publicAiInterviewRoutes = require('./api/publicAiInterview');
 const learningHubRoutes = require('./api/learningHub');
 const {
-  reconcileLearningRoleAssignments
+  scheduleLearningRoleAssignmentReconciliation
 } = require('./services/learningRoleAssignmentService');
 const { getUploadsRoot } = require('./utils/uploadPaths');
 const {
@@ -1612,11 +1612,7 @@ async function reconcileLearningAssignmentsForEmployees(employeeIds = []) {
     ? employeeIds.map(id => (id === undefined || id === null ? '' : String(id))).filter(Boolean)
     : [];
   if (!ids.length) return;
-  try {
-    await reconcileLearningRoleAssignments({ employeeIds: ids });
-  } catch (error) {
-    console.error('Failed to reconcile learning role assignments', error);
-  }
+  scheduleLearningRoleAssignmentReconciliation({ employeeIds: ids });
 }
 
 const SESSION_TOKENS = {}; // token: userId

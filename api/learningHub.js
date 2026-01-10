@@ -19,7 +19,8 @@ const {
 const {
   buildRoleAssignment,
   applyRoleAssignmentUpdates,
-  reconcileLearningRoleAssignments
+  reconcileLearningRoleAssignments,
+  scheduleLearningRoleAssignmentReconciliation
 } = require('../services/learningRoleAssignmentService');
 const {
   normalizeLessonAssetForPlayback
@@ -373,6 +374,7 @@ router.post('/role-assignments', requireLearningHubWriteAccess, async (req, res)
     const assignmentId = result?.value?._id;
     const updatedExisting = result?.lastErrorObject?.updatedExisting;
     const status = updatedExisting ? 200 : 201;
+    scheduleLearningRoleAssignmentReconciliation({ fullReconcile: true });
     return res.status(status).json({ id: assignmentId });
   } catch (error) {
     console.error('Failed to create role assignment', error);
@@ -421,6 +423,7 @@ router.put('/role-assignments/:id', requireLearningHubWriteAccess, async (req, r
     }
 
     db.invalidateCache?.();
+    scheduleLearningRoleAssignmentReconciliation({ fullReconcile: true });
     return res.json({ success: true });
   } catch (error) {
     console.error('Failed to update role assignment', error);
@@ -445,6 +448,7 @@ router.delete('/role-assignments/:id', requireLearningHubWriteAccess, async (req
     }
 
     db.invalidateCache?.();
+    scheduleLearningRoleAssignmentReconciliation({ fullReconcile: true });
     return res.json({ success: true });
   } catch (error) {
     console.error('Failed to delete role assignment', error);
@@ -815,7 +819,7 @@ router.post(
 });
 
 router.post('/assignments', requireLearningHubWriteAccess, async (req, res) => {
-  const { assignments, error } = buildCourseAssignments(req.body, {
+  const { roleAssignments, employeeAssignments, error } = buildCourseAssignments(req.body, {
     assignedBy: req.user?.id
   });
   if (error) {
@@ -824,22 +828,71 @@ router.post('/assignments', requireLearningHubWriteAccess, async (req, res) => {
 
   try {
     const database = getDatabase();
-    const bulkOps = assignments.map(assignment => ({
-      updateOne: {
-        filter: {
-          courseId: assignment.courseId,
-          assignmentType: assignment.assignmentType,
-          role: assignment.role,
-          employeeId: assignment.employeeId
-        },
-        update: { $set: assignment },
-        upsert: true
-      }
-    }));
+    const employeeBulkOps = [];
+    const roleBulkOps = [];
 
-    await database.collection('learningCourseAssignments').bulkWrite(bulkOps, { ordered: true });
+    if (employeeAssignments.length) {
+      employeeBulkOps.push(
+        ...employeeAssignments.map(assignment => {
+          const { assignedAt, assignedBy, ...updates } = assignment;
+          return {
+            updateOne: {
+              filter: {
+                courseId: assignment.courseId,
+                assignmentType: assignment.assignmentType,
+                role: assignment.role,
+                employeeId: assignment.employeeId
+              },
+              update: {
+                $set: updates,
+                $setOnInsert: { assignedAt, assignedBy }
+              },
+              upsert: true
+            }
+          };
+        })
+      );
+    }
+
+    if (roleAssignments.length) {
+      roleBulkOps.push(
+        ...roleAssignments.map(roleAssignment => ({
+          updateOne: {
+            filter: {
+              courseId: roleAssignment.courseId,
+              role: roleAssignment.role
+            },
+            update: {
+              $set: {
+                courseId: roleAssignment.courseId,
+                role: roleAssignment.role,
+                required: roleAssignment.required,
+                dueDays: roleAssignment.dueDays,
+                updatedAt: roleAssignment.updatedAt,
+                updatedBy: roleAssignment.updatedBy
+              },
+              $setOnInsert: {
+                createdAt: roleAssignment.createdAt,
+                createdBy: roleAssignment.createdBy
+              }
+            },
+            upsert: true
+          }
+        }))
+      );
+    }
+
+    if (employeeBulkOps.length) {
+      await database.collection('learningCourseAssignments').bulkWrite(employeeBulkOps, { ordered: true });
+    }
+
+    if (roleBulkOps.length) {
+      await database.collection('learningRoleAssignments').bulkWrite(roleBulkOps, { ordered: true });
+      scheduleLearningRoleAssignmentReconciliation({ fullReconcile: true });
+    }
+
     db.invalidateCache?.();
-    return res.status(201).json({ count: assignments.length });
+    return res.status(201).json({ count: roleAssignments.length + employeeAssignments.length });
   } catch (error) {
     console.error('Failed to assign course', error);
     return res.status(500).json({ error: 'internal_error' });
