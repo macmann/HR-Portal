@@ -28,6 +28,14 @@ function normalizeProgressStatus(value) {
   return PROGRESS_STATUSES.has(normalized) ? normalized : '';
 }
 
+function normalizeDueDays(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const rounded = Math.floor(parsed);
+  return Math.max(0, rounded);
+}
+
 function normalizeCourseStatus(value) {
   const normalized = normalizeString(value).toLowerCase();
   return COURSE_STATUSES.has(normalized) ? normalized : '';
@@ -237,7 +245,7 @@ function buildCourseAssignments(payload = {}, { assignedBy } = {}) {
   }
 
   const roles = Array.isArray(payload.roles)
-    ? payload.roles.map(role => normalizeString(role)).filter(Boolean)
+    ? payload.roles.map(role => normalizeString(role).toLowerCase()).filter(Boolean)
     : [];
   const employeeIds = Array.isArray(payload.employeeIds)
     ? payload.employeeIds.map(id => normalizeString(id)).filter(Boolean)
@@ -249,32 +257,35 @@ function buildCourseAssignments(payload = {}, { assignedBy } = {}) {
 
   const required = normalizeBoolean(payload.required);
   const dueDate = payload.dueDate ? new Date(payload.dueDate) : null;
+  const dueDays = normalizeDueDays(payload.dueDays);
+  if (Object.prototype.hasOwnProperty.call(payload, 'dueDays') && dueDays === null) {
+    return { error: 'invalid_due_days' };
+  }
   const now = new Date();
 
-  const assignments = [
-    ...roles.map(role => ({
-      courseId: String(courseId),
-      assignmentType: 'role',
-      role,
-      employeeId: null,
-      required,
-      dueDate,
-      assignedAt: now,
-      assignedBy: assignedBy || null
-    })),
-    ...employeeIds.map(employeeId => ({
-      courseId: String(courseId),
-      assignmentType: 'employee',
-      role: null,
-      employeeId,
-      required,
-      dueDate,
-      assignedAt: now,
-      assignedBy: assignedBy || null
-    }))
-  ];
+  const roleAssignments = roles.map(role => ({
+    courseId: String(courseId),
+    role,
+    required,
+    dueDays,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: assignedBy || null,
+    updatedBy: assignedBy || null
+  }));
 
-  return { assignments };
+  const employeeAssignments = employeeIds.map(employeeId => ({
+    courseId: String(courseId),
+    assignmentType: 'employee',
+    role: null,
+    employeeId,
+    required,
+    dueDate,
+    assignedAt: now,
+    assignedBy: assignedBy || null
+  }));
+
+  return { roleAssignments, employeeAssignments };
 }
 
 function buildProgressEntry(payload = {}) {

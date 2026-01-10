@@ -7,6 +7,12 @@ const INACTIVE_EMPLOYEE_STATUSES = new Set([
   'terminated'
 ]);
 
+const RECONCILE_DEBOUNCE_MS = 500;
+let reconcileTimer = null;
+let reconcileInFlight = false;
+let pendingFullReconcile = false;
+const pendingEmployeeIds = new Set();
+
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -346,8 +352,57 @@ async function reconcileLearningRoleAssignments(options = {}) {
   };
 }
 
+function scheduleLearningRoleAssignmentReconciliation(options = {}) {
+  const employeeIds = Array.isArray(options.employeeIds)
+    ? options.employeeIds.map(normalizeEmployeeId).filter(Boolean)
+    : [];
+  if (options.fullReconcile) {
+    pendingFullReconcile = true;
+    pendingEmployeeIds.clear();
+  } else if (employeeIds.length && !pendingFullReconcile) {
+    employeeIds.forEach(id => pendingEmployeeIds.add(id));
+  }
+
+  if (reconcileTimer) {
+    return;
+  }
+
+  reconcileTimer = setTimeout(async () => {
+    reconcileTimer = null;
+    if (reconcileInFlight) {
+      scheduleLearningRoleAssignmentReconciliation();
+      return;
+    }
+
+    const runFull = pendingFullReconcile;
+    const employeeBatch = runFull ? [] : Array.from(pendingEmployeeIds);
+    pendingEmployeeIds.clear();
+    pendingFullReconcile = false;
+    if (!runFull && !employeeBatch.length) {
+      return;
+    }
+
+    reconcileInFlight = true;
+    try {
+      if (runFull) {
+        await reconcileLearningRoleAssignments();
+      } else {
+        await reconcileLearningRoleAssignments({ employeeIds: employeeBatch });
+      }
+    } catch (error) {
+      console.error('Failed to reconcile learning role assignments', error);
+    } finally {
+      reconcileInFlight = false;
+      if (pendingFullReconcile || pendingEmployeeIds.size) {
+        scheduleLearningRoleAssignmentReconciliation();
+      }
+    }
+  }, RECONCILE_DEBOUNCE_MS);
+}
+
 module.exports = {
   buildRoleAssignment,
   applyRoleAssignmentUpdates,
-  reconcileLearningRoleAssignments
+  reconcileLearningRoleAssignments,
+  scheduleLearningRoleAssignmentReconciliation
 };
